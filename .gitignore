@@ -1,0 +1,43 @@
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python (pentru backend)
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+env/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# AI Model files (prea mari pentru git)
+*.h5
+*.pth
+*.ckpt
+*.pkl
+ai-model/data/
+
+# Secrets
+.env
+*.key
+*.pem
+secrets/
+
+# Logs
+*.log
+logs/
+
+# Build artifacts (extra)
+build/
+dist/
