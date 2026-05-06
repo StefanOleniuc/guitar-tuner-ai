@@ -41,3 +41,6 @@ logs/
 # Build artifacts (extra)
 build/
 dist/
+
+# Dev logs
+dev_logs/

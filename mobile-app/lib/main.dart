@@ -1,26 +1,14 @@
 // ═══════════════════════════════════════════════════════════════
-// Guitar Tuner AI - Aplicație de tuner pentru chitară cu AI
-// Autor: Oleniuc Ștefan
-// Universitatea Politehnica Timișoara - Ingineria Sistemelor
+// Guitar Tuner AI - Aplicatie de tuner pentru chitara cu AI
+// Autor: Oleniuc Stefan
+// Universitatea Politehnica Timisoara - Ingineria Sistemelor
 // ═══════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
-import 'package:logger/logger.dart';
-
-// Logger global — folosit în toată aplicația
-final logger = Logger(
-  printer: PrettyPrinter(
-    methodCount: 0, // nu afișa stack trace pentru fiecare log
-    errorMethodCount: 5, // dar pentru erori, afișează 5 niveluri
-    lineLength: 80,
-    colors: true,
-    printEmojis: true,
-    dateTimeFormat: DateTimeFormat.onlyTimeAndSinceStart,
-  ),
-);
+import 'utils/app_logger.dart';
 
 void main() {
-  logger.i('🚀 [main] Aplicația Guitar Tuner AI pornește...');
+  AppLogger.i('🚀 [main] Aplicația Guitar Tuner AI pornește...');
   runApp(const GuitarTunerApp());
 }
 
@@ -29,15 +17,15 @@ class GuitarTunerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    logger.d('🎨 [GuitarTunerApp] Construire aplicație...');
+    AppLogger.d('🎨 [GuitarTunerApp] Construire aplicație...');
 
     return MaterialApp(
       title: 'Guitar Tuner AI',
-      debugShowCheckedModeBanner: false, // ascunde banner-ul "DEBUG"
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.deepPurple,
-          brightness: Brightness.dark, // tema dark default
+          brightness: Brightness.dark,
         ),
         useMaterial3: true,
       ),
@@ -51,10 +39,10 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    logger.d('🏠 [HomeScreen] Construire ecran principal...');
+    AppLogger.d('🏠 [HomeScreen] Construire ecran principal...');
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Guitar Tuner AI STEFAN'), centerTitle: true),
+      appBar: AppBar(title: const Text('Guitar Tuner AI'), centerTitle: true),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -73,7 +61,9 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(height: 40),
             ElevatedButton.icon(
               onPressed: () {
-                logger.i('👆 [HomeScreen] Buton test apăsat!');
+                AppLogger.i('👆 [HomeScreen] Buton test apăsat!');
+                AppLogger.d('🔍 [HomeScreen] Debug message');
+                AppLogger.w('🔶 [HomeScreen] Test warning');
               },
               icon: const Icon(Icons.touch_app),
               label: const Text('Test Logger'),
