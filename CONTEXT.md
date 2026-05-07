@@ -152,28 +152,63 @@ guitar-tuner-ai/
 ### REGULA #1 — Bucăți mici, NU tot proiectul deodată
 ### REGULA #2 — Logging la fiecare pas
 
-**Tot codul generat TREBUIE să aibă logging clar.**
+**Tot codul generat TREBUIE să folosească AppLogger.**
+
+Avem un sistem custom de logging deja implementat în `lib/utils/app_logger.dart`.
 
 În Flutter (Dart):
 ```dart
-import 'package:logger/logger.dart';
-final logger = Logger();
+import '../utils/app_logger.dart';
 
-logger.d('🔍 [ServiceName] Action started: details');
-logger.i('ℹ️ [ServiceName] Info message');
-logger.w('⚠️ [ServiceName] Warning: something unusual');
-logger.e('❌ [ServiceName] Error: details', error: e, stackTrace: stackTrace);
+AppLogger.d('🔍 [ServiceName] Action started: details');   // debug
+AppLogger.i('🚀 [ServiceName] Info message');              // info
+AppLogger.w('🔶 [ServiceName] Warning: something unusual'); // warning
+AppLogger.e('❌ [ServiceName] Error', error: e, stackTrace: st); // error
 ```
 
-În Python (Backend):
+**Caracteristici:**
+- Mesajele primesc automat prefix `[APP_LOG]` pentru filtrare
+- `kDebugMode` activ — log-urile sunt sărite automat în release (zero overhead)
+- Format: `[APP_LOG] [LEVEL] HH:mm:ss.SSS - mesaj`
+- Folosește `debugPrint` (nu `print` simplu) — nu trunchiază mesaje lungi
+
+**Convenție emoji:**
+- 🔍 Debug (detalii tehnice)
+- 🚀 Start/launch
+- 🎨 Build/UI render
+- 👆 User interaction
+- 🎤 Audio capture
+- 🌐 HTTP request
+- 💾 Database/storage
+- ✅ Success
+- 🔶 Warning
+- ❌ Error
+- 🎸 Tuner-specific
+- 🥁 Metronom
+
+**În Python (Backend):**
 ```python
 import logging
 logger = logging.getLogger(__name__)
 
 logger.debug("🔍 [service_name] Action started: details")
-logger.info("ℹ️ [service_name] Info message")
-logger.warning("⚠️ [service_name] Warning")
+logger.info("🚀 [service_name] Info message")
+logger.warning("🔶 [service_name] Warning")
 logger.error("❌ [service_name] Error", exc_info=True)
+```
+
+### REGULA #2.5 — Workflow dev cu logging
+
+Pentru rulare cu salvare automată log-uri (debugging cu AI):
+```powershell
+.\run_dev.ps1
+```
+
+Generează 2 fișiere per sesiune:
+- `dev_logs/session_TIMESTAMP_FULL.txt` — tot output-ul
+- `dev_logs/session_TIMESTAMP_APP.txt` — doar liniile cu `[APP_LOG]` (curat)
+
+Pentru AI debugging: citește `_APP.txt` (curat și scurt).
 ```
 
 ### REGULA #3 — Cod citibil, comentat la pași non-triviali
