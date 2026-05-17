@@ -250,32 +250,90 @@ Dacă ceva nu merge după implementare:
 
 ---
 
-## 📊 Status Curent (de actualizat)
+---
 
-**Ultima actualizare:** [data curentă]
+## 🎯 Status implementare
 
-**Fază:** Setup mediu + structură proiect
+**Ultimă actualizare:** 14 mai 2026
 
-**Ce e GATA:**
-- ✅ Flutter SDK instalat și configurat (Windows)
-- ✅ Android Studio + SDK 34 (Android 14) + emulator Pixel 8
-- ✅ Python 3.14 instalat (Python 3.11 va fi instalat când începem backend)
-- ✅ Git + GitHub repo (StefanOleniuc/guitar-tuner-ai)
-- ✅ VS Code + extensii (Flutter, Dart, Python, Pylance, GitLens)
-- ✅ Proiect Flutter creat — Hello World rulează pe emulator
-- ✅ Structura foldere: mobile-app/, backend/, ai-model/, docs/
+### Faza curentă: AUDIO CAPTURE FUNCȚIONAL → URMEAZĂ PITCH DETECTION (YIN)
 
-**Ce URMEAZĂ:**
-1. Backend FastAPI Hello World
-2. Captură audio Flutter cu permisiuni microfon
-3. Implementare YIN în Dart
-4. UI tuner basic
-5. Conectare Flutter ↔ Backend
-6. Integrare CREPE
-7. Auth + Database
-8. Metronom + Chord Library
-9. Polish + Testing
-10. Documentație scrisă (capitole 1-7)
+### Ce e GATA:
+- ✅ Mediu dezvoltare: Flutter + Android Studio + VS Code
+- ✅ Telefon Motorola edge 20 conectat (USB debugging)
+- ✅ Repository GitHub: StefanOleniuc/guitar-tuner-ai
+- ✅ Aplicație Flutter cu schelet curat (main.dart, HomeScreen)
+- ✅ AppLogger funcțional ([APP_LOG] tag, debugPrint)
+- ✅ Sistem dev logging cu run_dev.ps1 (FULL + APP fișiere)
+- ✅ Tema dark, Material 3
+- ✅ Backend FastAPI:
+  - Structură completă (app/, api/, core/, models/, services/)
+  - Endpoint /api/health funcțional
+  - Logging structurat cu emoji
+  - Configurare prin .env (pydantic-settings)
+  - Script run_server.ps1 cu UTF-8 encoding fix
+- ✅ Conectare Flutter ↔ Backend:
+  - ApiService cu http package
+  - ApiConstants pentru URL-uri (debug vs prod)
+  - HealthResponse model cu factory.fromJson
+  - Buton "🌐 Test Backend Connection" funcțional
+  - Verificare reușită pe telefon: răspuns JSON de la backend
+- ✅ Captură audio din microfon:
+  - AudioService cu pachetele `record` + `permission_handler`
+  - Permisiuni microfon Android (AndroidManifest.xml)
+  - Stream<Uint8List> de chunks audio PCM16, 16kHz, mono
+  - UI cu buton 🎤/⏹️ (verde/roșu)
+  - Card cu statistici live: bytes, samples, durată
+- ✅ Volume meter (RMS):
+  - AudioUtils.calculateRMS() — Root Mean Square din PCM16
+  - AudioUtils.rmsToNormalized() — interval [0.0, 1.0]
+  - LinearProgressIndicator color-coded:
+    - Verde 0-30%
+    - Galben 30-70%
+    - Roșu peste 70%
+  - Peak volume tracker
+
+### În LUCRU:
+- 🔄 Pitch detection cu algoritm YIN (URMEAZĂ - sesiune dedicată)
+
+### URMEAZĂ (în ordine):
+1. **YIN algorithm în Dart** (Pitch detection local, offline)
+   - Implementare difference function
+   - CMNDF (Cumulative Mean Normalized Difference Function)
+   - Interpolare parabolică pentru precizie sub-sample
+   - Output: frecvența fundamentală în Hz
+2. Conectare YIN cu stream audio (pipeline complet: mic → YIN → frecvență)
+3. UI tuner: afișare notă detectată + cenți față de țintă
+4. Multi-instrument + multi-acordaj (chitară, bas, ukulele, vioară)
+5. UI vizual chitară (acul tunerului dinamic)
+6. Backend: integrare CREPE (model AI pitch detection)
+7. Backend: autentificare JWT + database PostgreSQL
+8. Funcționalități extra: Metronom + Chord Library
+9. Deploy backend pe Railway
+10. Testing + Documentație lucrare
+
+### Reguli pentru AI (Claude din VS Code):
+- NU genera tot proiectul deodată
+- NU genera cod exemplu/demo - doar cod care va rămâne în aplicația finală
+- Mereu cu logging [APP_LOG] / Python logging cu emoji
+- Diacritice românești în UI
+- Citește contextul înainte să generezi orice
+- Cod cu comentarii pe părți non-triviale (matematică, algoritmi)
+- Pentru fiecare bucată: explicații linie cu linie după
+
+### Concepte stăpânite (verificate prin Q&A):
+- ✅ Future / async / await (cod asincron, nu blochează UI)
+- ✅ mounted (siguranță setState după await)
+- ✅ kDebugMode vs kReleaseMode (cod diferit dev vs prod)
+- ✅ factory constructor (conversie JSON → obiect Dart)
+- ✅ RMS (Root Mean Square — calcul volum audio)
+
+### Concepte de învățat (sesiunile următoare):
+- 🔄 Algoritm YIN (autocorrelation, CMNDF, octave errors)
+- 🔄 FFT și spectrograme
+- 🔄 CNN și CREPE
+- 🔄 JWT și securitate API
+- 🔄 SQLAlchemy ORM
 
 ---
 
