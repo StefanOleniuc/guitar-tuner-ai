@@ -1,0 +1,7 @@
+# Constrangeri pentru pip (venv + medii izolate de build).
+#
+# setuptools 81.0 (2025-07) a scos `pkg_resources` din install-ul default.
+# Cateva dependente vechi din lantul crepe (ex. hmmlearn, resampy) inca au
+# `import pkg_resources` in setup.py -> build esueaza in medii izolate cu
+# setuptools >=81. Pinarea <81 mentine pkg_resources disponibil la build.
+setuptools<81

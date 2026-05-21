@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:permission_handler/permission_handler.dart';
@@ -40,7 +41,10 @@ class AudioService {
         numChannels: 1,
       );
 
-      _audioStream = await _recorder.startStream(config);
+      // Broadcast: permitem multipli ascultători (ex. listener-ul
+      // real-time al tunerului + o captură punctuală pentru AI).
+      final source = await _recorder.startStream(config);
+      _audioStream = source.asBroadcastStream();
       _isRecording = true;
 
       AppLogger.i('🎤 [AudioService] Captură pornită — 16kHz, mono, PCM16');

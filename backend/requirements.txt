@@ -3,3 +3,9 @@ uvicorn[standard]==0.34.0
 python-dotenv==1.1.0
 pydantic==2.11.4
 pydantic-settings==2.9.1
+python-multipart==0.0.29
+
+# AI pitch detection (CREPE rulează pe TensorFlow)
+crepe==0.0.16
+tensorflow==2.21.0
+numpy>=1.26,<3

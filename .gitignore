@@ -44,3 +44,7 @@ dist/
 
 # Dev logs
 dev_logs/
+backend/server_logs/
+
+# Claude Code local config
+.claude/

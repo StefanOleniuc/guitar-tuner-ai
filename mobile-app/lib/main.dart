@@ -6,11 +6,17 @@
 
 import 'package:flutter/material.dart';
 
-import 'screens/home_screen.dart';
+import 'screens/tuner_screen.dart';
+import 'services/app_settings.dart';
 import 'utils/app_logger.dart';
 
-void main() {
+Future<void> main() async {
+  // Necesar înainte de orice plugin (shared_preferences) folosit în main.
+  WidgetsFlutterBinding.ensureInitialized();
   AppLogger.i('🚀 [main] Aplicația Guitar Tuner AI pornește...');
+  // Încărcăm preferințele (instrument + calibrare A4) înainte de runApp
+  // ca primul cadru să fie deja corect configurat.
+  await AppSettings.instance.load();
   runApp(const GuitarTunerApp());
 }
 
@@ -22,7 +28,7 @@ class GuitarTunerApp extends StatelessWidget {
     AppLogger.d('🎨 [GuitarTunerApp] Construire aplicație...');
 
     return MaterialApp(
-      title: 'Guitar Tuner AI',
+      title: 'GTune AI - AI Guitar Tuner',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -31,7 +37,7 @@ class GuitarTunerApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const HomeScreen(),
+      home: const TunerScreen(),
     );
   }
 }

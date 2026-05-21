@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 .env
 .pytest_cache/
+
+# Auto-instalare deps: hash-ul ultimului requirements.txt sincronizat
+.deps_hash
+
+# Server log-uri (similar cu dev_logs/ pentru app)
+server_logs/
