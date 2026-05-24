@@ -1,4 +1,5 @@
 import logging
+import sys
 from datetime import datetime
 
 
@@ -30,7 +31,9 @@ def setup_logging(log_level: str) -> None:
         fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
 
-    handler = logging.StreamHandler()
+    # stdout (nu stderr) — Railway/Docker colorează stderr cu roșu și
+    # marchează totul ca "error" în UI, chiar și log-urile INFO benigne.
+    handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
 
     root = logging.getLogger()
