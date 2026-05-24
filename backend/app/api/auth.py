@@ -7,6 +7,7 @@ import logging
 import re
 import secrets
 import smtplib
+import socket
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 
@@ -224,34 +225,47 @@ def _send_reset_email(to_email: str, code: str) -> None:
     msg["To"] = to_email
 
     last_exc: Exception | None = None
-    # Încercăm 587 (STARTTLS) întâi — cel mai des permis pe PaaS.
-    try:
-        logger.info("🔐 [auth] SMTP: conect la smtp.gmail.com:587 (STARTTLS)…")
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.login(user, pwd)
-            smtp.send_message(msg)
-        logger.info("🔐 [auth] SMTP: email trimis OK către %s (587)", to_email)
-        return
-    except Exception as exc:
-        last_exc = exc
-        logger.warning("🔐 [auth] SMTP 587 a eșuat: %s — încerc 465", exc)
+    # Pe Railway, getaddrinfo() returnează adesea întâi IPv6 pentru
+    # smtp.gmail.com, dar containerul nu are conectivitate IPv6 →
+    # "Network is unreachable" (Errno 101). Forțăm IPv4 doar pe durata
+    # acestei funcții (monkey-patch scoped).
+    _orig_getaddrinfo = socket.getaddrinfo
 
-    # Fallback: SMTP_SSL pe 465.
+    def _v4_only(host, port, *args, **kwargs):
+        return _orig_getaddrinfo(host, port, socket.AF_INET, *args[1:], **kwargs)
+
+    socket.getaddrinfo = _v4_only
     try:
-        logger.info("🔐 [auth] SMTP: conect la smtp.gmail.com:465 (SSL)…")
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as smtp:
-            smtp.login(user, pwd)
-            smtp.send_message(msg)
-        logger.info("🔐 [auth] SMTP: email trimis OK către %s (465)", to_email)
-    except Exception as exc:
-        logger.error(
-            "🔐 [auth] SMTP a eșuat pe ambele porturi (587: %s, 465: %s)",
-            last_exc,
-            exc,
-        )
-        raise
+        # Încercăm 587 (STARTTLS) întâi — cel mai des permis pe PaaS.
+        try:
+            logger.info("🔐 [auth] SMTP: conect la smtp.gmail.com:587 (STARTTLS, IPv4)…")
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as smtp:
+                smtp.ehlo()
+                smtp.starttls()
+                smtp.login(user, pwd)
+                smtp.send_message(msg)
+            logger.info("🔐 [auth] SMTP: email trimis OK către %s (587)", to_email)
+            return
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("🔐 [auth] SMTP 587 a eșuat: %s — încerc 465", exc)
+
+        # Fallback: SMTP_SSL pe 465.
+        try:
+            logger.info("🔐 [auth] SMTP: conect la smtp.gmail.com:465 (SSL, IPv4)…")
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as smtp:
+                smtp.login(user, pwd)
+                smtp.send_message(msg)
+            logger.info("🔐 [auth] SMTP: email trimis OK către %s (465)", to_email)
+        except Exception as exc:
+            logger.error(
+                "🔐 [auth] SMTP a eșuat pe ambele porturi (587: %s, 465: %s)",
+                last_exc,
+                exc,
+            )
+            raise
+    finally:
+        socket.getaddrinfo = _orig_getaddrinfo
 
 
 @router.post("/reset-password")
