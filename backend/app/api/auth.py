@@ -195,8 +195,21 @@ _OTP_VALID_MINUTES = 15
 
 
 def _send_reset_email(to_email: str, code: str) -> None:
-    """Trimite codul OTP prin Gmail SMTP cu SSL."""
+    """Trimite codul OTP prin Gmail SMTP.
+
+    Încearcă întâi STARTTLS pe port 587 (cel mai larg permis de PaaS),
+    cu fallback pe SMTP_SSL port 465. Ambele cu timeout de 10s ca să nu
+    atârne indefinit pe Railway dacă portul e blocat.
+    """
     from app.config import settings  # import local evită circular import la startup
+
+    user = settings.GMAIL_USER
+    pwd = settings.GMAIL_APP_PASSWORD
+    if not user or not pwd:
+        logger.error(
+            "🔐 [auth] GMAIL_USER/GMAIL_APP_PASSWORD lipsesc — email NU s-a trimis"
+        )
+        return
 
     msg = MIMEText(
         f"Codul tău de resetare parolă GTune AI este:\n\n"
@@ -207,12 +220,38 @@ def _send_reset_email(to_email: str, code: str) -> None:
         "utf-8",
     )
     msg["Subject"] = f"GTune AI — Cod resetare parolă: {code}"
-    msg["From"] = settings.GMAIL_USER
+    msg["From"] = user
     msg["To"] = to_email
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login(settings.GMAIL_USER, settings.GMAIL_APP_PASSWORD)
-        smtp.send_message(msg)
+    last_exc: Exception | None = None
+    # Încercăm 587 (STARTTLS) întâi — cel mai des permis pe PaaS.
+    try:
+        logger.info("🔐 [auth] SMTP: conect la smtp.gmail.com:587 (STARTTLS)…")
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(user, pwd)
+            smtp.send_message(msg)
+        logger.info("🔐 [auth] SMTP: email trimis OK către %s (587)", to_email)
+        return
+    except Exception as exc:
+        last_exc = exc
+        logger.warning("🔐 [auth] SMTP 587 a eșuat: %s — încerc 465", exc)
+
+    # Fallback: SMTP_SSL pe 465.
+    try:
+        logger.info("🔐 [auth] SMTP: conect la smtp.gmail.com:465 (SSL)…")
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as smtp:
+            smtp.login(user, pwd)
+            smtp.send_message(msg)
+        logger.info("🔐 [auth] SMTP: email trimis OK către %s (465)", to_email)
+    except Exception as exc:
+        logger.error(
+            "🔐 [auth] SMTP a eșuat pe ambele porturi (587: %s, 465: %s)",
+            last_exc,
+            exc,
+        )
+        raise
 
 
 @router.post("/reset-password")
