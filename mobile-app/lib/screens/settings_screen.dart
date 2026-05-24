@@ -411,8 +411,9 @@ class _DisplayCard extends StatelessWidget {
               ),
               const Divider(height: 1, color: _track, indent: 2, endIndent: 2),
               _SettingsRow(
-                title: 'Mod cromatic',
-                subtitle: 'Detectează orice notă (84 multi-octavă), nu doar corzile',
+                title: 'Acordor cromatic',
+                subtitle:
+                    'Detectează orice notă (84 multi-octavă), nu doar corzile',
                 value: AppSettings.instance.chromaticMode,
                 onChanged: AppSettings.instance.setChromaticMode,
               ),
@@ -458,10 +459,7 @@ class _SettingsRow extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11.5,
-                  ),
+                  style: const TextStyle(color: Colors.white38, fontSize: 11.5),
                 ),
               ],
             ),

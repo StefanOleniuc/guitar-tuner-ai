@@ -55,4 +55,22 @@ class ActivePage extends ChangeNotifier {
     _barAllowed = v;
     notifyListeners();
   }
+
+  // ─── Request explicit de schimbare a tabului ────────────────────────
+  //
+  // În general taburile se schimbă din `PersistentFeatureBar` (tap pe
+  // buton) sau prin swipe pe PageView. Există însă cazuri în care un
+  // ecran *din interior* (ex. tap pe logo din AuthScreen tab) vrea să
+  // ceară shell-ului „du-mă pe tab-ul X". MainShell înregistrează
+  // [tabRequestHandler] în initState și îl folosește ca să facă
+  // `PageController.jumpToPage`.
+  void Function(int)? tabRequestHandler;
+
+  /// Cere shell-ului să navigheze instant la tab-ul [index]. No-op dacă
+  /// shell-ul nu a înregistrat un handler (rar — doar dacă MainShell
+  /// nu e încă montat).
+  void requestTab(int index) {
+    final h = tabRequestHandler;
+    if (h != null) h(index);
+  }
 }

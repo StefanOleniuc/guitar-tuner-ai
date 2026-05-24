@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
-import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -76,6 +75,8 @@ class _TunerScreenState extends State<TunerScreen>
 
   // Sesiune: corzile acordate rămân verzi până la reset
   final Set<String> _tunedStrings = {};
+  // Corzi ce tocmai au primit bifa — fereastra de bloom (~480ms).
+  final Set<String> _justTuned = {};
   bool _allTuned = false;
   // Mod cromatic: citit din AppSettings (toggle în Setări → Acordor).
   // Când e on, detectăm ORICE notă din lista 84-multi-octavă în loc de
@@ -128,8 +129,13 @@ class _TunerScreenState extends State<TunerScreen>
   static const int _kInTuneFramesNeededAi = 2;
   String? _tuneCandidate;
   int _inTuneStreak = 0;
-  // Salt mare neconfirmat — îl reținem ca să cerem confirmare pe 2 cadre
+  // Salt mare neconfirmat — îl reținem ca să cerem confirmare pe 3 cadre
+  // consecutive cu valoare similară şi plauzibilă (aproape de vreo coardă).
+  // 3 cadre la ~64ms = ~190ms latenţă la schimbare reală de coardă — dar
+  // elimină cazurile în care 2 erori YIN consecutive (ex. subharmonică /4 pe
+  // corzi groase) erau acceptate fals şi „lipeau” acul minute întregi.
   double? _pendingFreq;
+  int _pendingCount = 0;
   StreamSubscription<Uint8List>? _audioSubscription;
 
   // ─── AI Precision (CREPE) ─────────────────────────────────────────
@@ -201,10 +207,29 @@ class _TunerScreenState extends State<TunerScreen>
   Future<void> _bootstrap() async {
     final granted = await _audioService.hasPermission();
     if (!mounted) return;
-    // Pushăm welcome-auth ÎNAINTE de setState — așa userul nu vede nici
-    // măcar un frame de tuner între ecranul de permisiune și AuthScreen
-    // (ruta nouă se desenează peste tuner pe același pas de build).
-    if (granted) _maybeShowWelcomeAuth();
+
+    // Cazul „prima pornire, mic aprobat, fără cont": vrem să-i arătăm
+    // AuthScreen-ul fără să apară NICIUN cadru de tuner sub el (altfel
+    // se vede UI-ul tunerului în spatele animației de slide-up a rutei
+    // — flash vizibil, dă impresia de bug).
+    //
+    // Soluția: NU ridicăm `_permissionChecked=true` (corpul rămâne
+    // SizedBox.shrink, lăsând să se vadă doar AppBackground din MainShell)
+    // și `await`-uim push-ul. Când userul revine din AuthScreen, abia
+    // atunci materializăm tunerul + pornim captura. Ruta de Auth e
+    // pushedover-MainShell oricum, deci bara de jos e ascunsă automat.
+    final showWelcome =
+        granted &&
+        !AppSettings.instance.welcomeSeen &&
+        !AuthService.instance.isAuthenticated;
+    if (showWelcome) {
+      AppSettings.instance.markWelcomeSeen();
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => const AuthScreen()));
+      if (!mounted) return;
+    }
+
     setState(() {
       _permissionChecked = true;
       _permissionDenied = !granted;
@@ -214,21 +239,8 @@ class _TunerScreenState extends State<TunerScreen>
     _startListening();
   }
 
-  /// Afișează ecranul de autentificare opțional la prima pornire.
-  ///
-  /// Push SINCRON (fără `addPostFrameCallback`) — altfel se vede un cadru
-  /// de tuner între aprobarea microfonului și AuthScreen. Navigator.push
-  /// programează ruta nouă pentru următorul build, fără să forțeze un
-  /// frame intermediar al ecranului acoperit.
-  void _maybeShowWelcomeAuth() {
-    if (!mounted) return;
-    if (AppSettings.instance.welcomeSeen) return;
-    if (AuthService.instance.isAuthenticated) return;
-    AppSettings.instance.markWelcomeSeen();
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute<void>(builder: (_) => const AuthScreen()));
-  }
+  // `_maybeShowWelcomeAuth` a fost absorbit în `_bootstrap` ca să putem
+  // `await` push-ul și să evităm flash-ul de tuner sub AuthScreen.
 
   @override
   void dispose() {
@@ -381,21 +393,50 @@ class _TunerScreenState extends State<TunerScreen>
     final ref = _recentFreqs.isNotEmpty ? _median(_recentFreqs) : 0.0;
     final folded = _pitchService.foldToTuning(frequency, notes, ref: ref);
 
+    // Plausibility gate: dacă nici după pliere frecvența nu cade la ±200¢
+    // (un ton întreg) de vreo coardă, e zgomot/armonică neidentificată
+    // (ex. 1469Hz pe E4, 4054Hz pe B3 — la >2000¢ de orice coardă; ar fi
+    // clampate la ±50¢ și ar minți utilizatorul). Lăsăm ±200¢ ca să acceptăm
+    // strune real-dezacordate până la 2 semitoane — altfel utilizatorul cu
+    // chitara puternic dezacordată n-ar vedea nimic pe meter.
+    // NU afișăm frame-ul și nu-l băgăm în istoric.
+    if (!_pitchService.isPlausibleForTuning(folded, notes, maxCents: 200)) {
+      AppLogger.d(
+        '🔍 [Tuner] frame implauzibil ignorat: '
+        '${folded.toStringAsFixed(1)}Hz (raw ${frequency.toStringAsFixed(1)})',
+      );
+      return;
+    }
+
     if (ref > 0) {
       final ratio = folded / ref;
-      // Salt mare (~>1 semiton): cerem confirmare pe 2 cadre.
+      // Salt mare (~>1 semiton): cerem confirmare pe 3 cadre consecutive
+      // cu valoare similară. Înainte erau 2 → 2 erori YIN de subharmonică
+      // consecutive (ex. 36Hz pe D3) treceau drept „schimbare reală" și
+      // lipeau acul la octava greșită minute întregi.
       if (ratio < 0.94 || ratio > 1.06) {
         final p = _pendingFreq;
         if (p != null && (folded / p - 1).abs() < 0.04) {
-          // Confirmat → schimbare reală de coardă, reset instant
+          _pendingCount++;
+          if (_pendingCount < 3) {
+            _pendingFreq = folded;
+            AppLogger.d(
+              '🔍 [Tuner] outlier în așteptare ($_pendingCount/3): '
+              '${folded.toStringAsFixed(1)}Hz (ref ${ref.toStringAsFixed(1)})',
+            );
+            return;
+          }
+          // 3 cadre la fel → schimbare reală de coardă, reset instant
           _recentFreqs.clear();
           _euro.reset();
           _inTuneHyst = false;
           _tuneCandidate = null;
           _inTuneStreak = 0;
           _pendingFreq = null;
+          _pendingCount = 0;
         } else {
-          _pendingFreq = folded; // primul cadru „ciudat" → așteptăm
+          _pendingFreq = folded; // primul cadru ciudat (sau nepotrivit) → reset
+          _pendingCount = 1;
           AppLogger.d(
             '🔍 [Tuner] outlier respins: '
             '${folded.toStringAsFixed(1)}Hz (ref ${ref.toStringAsFixed(1)})',
@@ -404,6 +445,7 @@ class _TunerScreenState extends State<TunerScreen>
         }
       } else {
         _pendingFreq = null; // în interiorul aceleiași note
+        _pendingCount = 0;
       }
     }
 
@@ -494,7 +536,22 @@ class _TunerScreenState extends State<TunerScreen>
     final hz = _aiFreqHint;
     if (hz == null || _aiNote.isEmpty) return;
     _lastValidDetection = DateTime.now(); // ține semnalul „viu"
+    // Resetăm și inactivity timer-ul — altfel sesiunea pică la 12s chiar
+    // dacă CREPE raportează activ (YIN e mut în zgomot și _onValidPitch
+    // nu mai e apelat → timer-ul ar expira mid-tuning și ar șterge corzile
+    // deja acordate).
+    _restartInactivityTimer();
     if (!mounted) return;
+
+    // Histerezis verde — aceleași praguri ca pe ramura YIN (intră la 5¢,
+    // iese la 9¢). Fără asta `_colorForCents` nu devine niciodată verde
+    // când CREPE conduce, chiar dacă `_aiCents` e ~0.
+    if (!_inTuneHyst && _aiCents.abs() < 5) {
+      _inTuneHyst = true;
+    } else if (_inTuneHyst && _aiCents.abs() > 9) {
+      _inTuneHyst = false;
+    }
+
     setState(() {
       _freq = hz;
       _note = _aiNote;
@@ -534,6 +591,12 @@ class _TunerScreenState extends State<TunerScreen>
   void _playStringTuned(String note) {
     // Feedback haptic — redarea de sunet în timpul capturii blochează stream-ul pe Android.
     HapticFeedback.mediumImpact();
+    // Bloom vizual: AnimatedScale pe cercul din string row face scale-up
+    // rapid la 1.35×, revenind la 1.0 după ~480ms.
+    setState(() => _justTuned.add(note));
+    Future.delayed(const Duration(milliseconds: 480), () {
+      if (mounted) setState(() => _justTuned.remove(note));
+    });
     AppLogger.i(
       '✅ [TunerScreen] Coardă acordată: $note '
       '(${_tunedStrings.length}/${_tuning.notes.length})',
@@ -579,6 +642,7 @@ class _TunerScreenState extends State<TunerScreen>
   }
 
   void _resetSession() {
+    _justTuned.clear();
     setState(() {
       _tunedStrings.clear();
       _allTuned = false;
@@ -872,7 +936,7 @@ class _TunerScreenState extends State<TunerScreen>
   String get _statusText {
     if (_permissionDenied) return 'Acces microfon refuzat';
     if (!_listening) return 'Microfon oprit';
-    if (!_hasSignal) return 'Pluck a string to start';
+    if (!_hasSignal) return 'Ciupește o coardă pentru a începe';
     final c = _targetCents;
     if (c.abs() < 5) return '✓  Acordat';
     return c < 0 ? '▲  Prea jos' : '▼  Prea sus';
@@ -910,44 +974,15 @@ class _TunerScreenState extends State<TunerScreen>
                     // Spațiu pentru AppBar-ul transparent (body extins în
                     // spate ca gradientul să fie continuu).
                     const SizedBox(height: kToolbarHeight - 12),
-                    // În mod cromatic ascundem instrument + tuning selector
-                    // + string row — concepte fără sens când detectăm orice
-                    // notă. Userul vede direct meter-ul, curat și focused.
+                    // ── Selectorul de MOD principal ─────────────────
+                    // Două pastile mari, segmented: Instrument vs Cromatic.
+                    // Tot ce e specific instrumentului (acordaj, corzi) se
+                    // ascunde automat când treci pe Cromatic — concept fără
+                    // sens când detectezi orice notă.
+                    _buildModeSwitcher(),
+                    const SizedBox(height: 14),
                     if (!_chromaticMode) ...[
-                      _buildHeader(),
-                      const SizedBox(height: 14),
                       _buildTuningSelector(),
-                      const SizedBox(height: 14),
-                    ] else ...[
-                      // Header subțire pentru modul cromatic — semnal
-                      // vizual că nu mai suntem pe instrumentul curent.
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _green.withAlpha(22),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: _green.withAlpha(80)),
-                        ),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.piano_outlined, color: _green, size: 18),
-                            SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                'Mod cromatic — detectează orice notă',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
                       const SizedBox(height: 14),
                     ],
                     _buildModeToggle(),
@@ -965,6 +1000,9 @@ class _TunerScreenState extends State<TunerScreen>
 
                     const Spacer(flex: 3),
                     _buildSessionFooter(),
+                    // Gap explicit între footer și spațiul navbarului —
+                    // evită lipirea conținutului de bara plutitoare.
+                    const SizedBox(height: 14),
                     // Spațiu rezervat pentru bara persistentă plutitoare —
                     // bara aparține `MainShell`, dar conținutul nostru nu
                     // trebuie să ajungă sub ea.
@@ -1085,88 +1123,24 @@ class _TunerScreenState extends State<TunerScreen>
     final granted = await _audioService.requestPermission();
     if (!mounted) return;
     if (granted) {
-      // Push welcome ÎNAINTE de setState — fără frame intermediar de tuner.
-      _maybeShowWelcomeAuth();
+      // Welcome auth la prima pornire: așteptăm să se închidă AuthScreen-ul
+      // înainte să materializăm tunerul, ca să nu apară flash în spate.
+      final showWelcome =
+          !AppSettings.instance.welcomeSeen &&
+          !AuthService.instance.isAuthenticated;
+      if (showWelcome) {
+        AppSettings.instance.markWelcomeSeen();
+        await Navigator.of(
+          context,
+        ).push(MaterialPageRoute<void>(builder: (_) => const AuthScreen()));
+        if (!mounted) return;
+      }
       setState(() => _permissionDenied = false);
       ActivePage.instance.setBarAllowed(true);
       _startListening();
     } else {
       await _audioService.openSystemSettings();
     }
-  }
-
-  /// Header: instrument activ, tap deschide Setări.
-  Widget _buildHeader() {
-    final inst = AppSettings.instance.instrument;
-    return GestureDetector(
-      onTap: _openSettings,
-      behavior: HitTestBehavior.opaque,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
-            decoration: BoxDecoration(
-              color: Colors.white.withAlpha(14),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white.withAlpha(26)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 52,
-                  height: 52,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withAlpha(16),
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                  child: Text(inst.emoji, style: const TextStyle(fontSize: 27)),
-                ),
-                const SizedBox(width: 13),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        inst.name,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.2,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${inst.stringCount} corzi  ·  ${_tuning.name}',
-                        style: const TextStyle(
-                          color: Colors.white38,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.all(7),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withAlpha(14),
-                  ),
-                  child: const Icon(
-                    Icons.tune,
-                    size: 17,
-                    color: Colors.white60,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   /// Panoul central: notă, frecvență, ac cu cenți, status acordaj.
@@ -1178,20 +1152,31 @@ class _TunerScreenState extends State<TunerScreen>
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
       decoration: BoxDecoration(
-        color: Colors.white.withAlpha(7),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: _inTuneHyst
+              ? [const Color(0xFF112018), const Color(0xFF0C150F)]
+              : [const Color(0xFF181818), const Color(0xFF0F0F0F)],
+        ),
         borderRadius: BorderRadius.circular(28),
         border: Border.all(
           color: _inTuneHyst
-              ? _green.withAlpha(130)
+              ? _green.withAlpha(140)
               : Colors.white.withAlpha(18),
           width: 1.4,
         ),
         boxShadow: _inTuneHyst
             ? [
                 BoxShadow(
-                  color: _green.withAlpha(46),
-                  blurRadius: 30,
+                  color: _green.withAlpha(55),
+                  blurRadius: 40,
                   spreadRadius: -8,
+                ),
+                BoxShadow(
+                  color: _green.withAlpha(20),
+                  blurRadius: 80,
+                  spreadRadius: -20,
                 ),
               ]
             : null,
@@ -1311,14 +1296,13 @@ class _TunerScreenState extends State<TunerScreen>
   }
 
   /// Placeholder animat când nu e semnal.
+  ///
+  /// Emblema „GT" (PNG cu fundal transparent, generat din logo-ul oficial)
+  /// stă în interiorul cercului verde pulsator. Peste ea, un strat fin de
+  /// film grain dă senzația premium / „live", iar fade-ul lin (legat de
+  /// `_breath`) face placeholder-ul să respire fără să distragă.
   Widget _buildIdlePlaceholder() {
     final scale = 0.93 + 0.07 * _breath;
-    // Notă cu tentă verde-grizat care variază lin cu respirația.
-    final noteTint = Color.lerp(
-      const Color(0xFF7E94A0),
-      _green,
-      0.20 + 0.30 * _breath,
-    )!;
     return Transform.scale(
       scale: scale,
       child: Container(
@@ -1328,19 +1312,59 @@ class _TunerScreenState extends State<TunerScreen>
           shape: BoxShape.circle,
           gradient: RadialGradient(
             colors: [
-              _green.withAlpha((7 + 11 * _breath).round()),
+              _green.withAlpha((10 + 18 * _breath).round()),
               Colors.transparent,
             ],
           ),
           border: Border.all(
-            color: _green.withAlpha((15 + 24 * _breath).round()),
+            color: _green.withAlpha((22 + 38 * _breath).round()),
             width: 1.5,
           ),
         ),
-        child: Icon(
-          Icons.music_note,
-          size: 44,
-          color: noteTint.withAlpha((75 + 55 * _breath).round()),
+        child: ClipOval(
+          child: Stack(
+            fit: StackFit.expand,
+            alignment: Alignment.center,
+            children: [
+              // Halo radial verde subtil sub emblemă — adâncime fără
+              // zgomot vizual.
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    colors: [
+                      _green.withAlpha((26 + 32 * _breath).round()),
+                      Colors.transparent,
+                    ],
+                    radius: 0.85,
+                  ),
+                ),
+              ),
+              // Emblema „GT" — padding ca să rămână cercul vizibil în jur.
+              // Pulsează cu un fade lin sincronizat cu respirația.
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Opacity(
+                  opacity: (0.62 + 0.30 * _breath).clamp(0.0, 1.0),
+                  child: Image.asset(
+                    'assets/images/GTune_emblem_transparent.png',
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.medium,
+                  ),
+                ),
+              ),
+              // Film grain — textură fină de zgomot, reseed la fiecare
+              // tick de respirație pentru efect „cinematic".
+              IgnorePointer(
+                child: Opacity(
+                  opacity: 0.07 + 0.04 * _breath,
+                  child: CustomPaint(
+                    painter: _FilmGrainPainter(seed: _breath),
+                    size: Size.infinite,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1423,8 +1447,10 @@ class _TunerScreenState extends State<TunerScreen>
   }
 
   Widget _buildSessionFooter() {
+    final Widget content;
     if (_allTuned) {
-      return Container(
+      content = Container(
+        key: const ValueKey('allTuned'),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
         decoration: BoxDecoration(
           color: _green.withAlpha(38),
@@ -1459,10 +1485,9 @@ class _TunerScreenState extends State<TunerScreen>
           ],
         ),
       );
-    }
-
-    if (_tunedStrings.isNotEmpty) {
-      return Row(
+    } else if (_tunedStrings.isNotEmpty) {
+      content = Row(
+        key: const ValueKey('partial'),
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
@@ -1483,9 +1508,198 @@ class _TunerScreenState extends State<TunerScreen>
           ),
         ],
       );
+    } else {
+      content = const SizedBox(key: ValueKey('empty'), height: 36);
+    }
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 360),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, animation) => ScaleTransition(
+        // Scale din topCenter → creșterea merge în sus (spre spacer),
+        // nu în jos spre nav bar. Evită suprapunerea indiferent de timing.
+        alignment: Alignment.topCenter,
+        scale: animation,
+        child: FadeTransition(opacity: animation, child: child),
+      ),
+      child: content,
+    );
+  }
+
+  /// Selectorul principal de **mod** al tunerului: două pastile mari,
+  /// segmented — "Instrument" (cu emoji + numele instrumentului curent)
+  /// vs "Cromatic" (orice notă). Înlocuiește vechiul `_buildHeader`
+  /// (card cu instrumentul) și banner-ul vechi din modul cromatic.
+  ///
+  /// Tap pe pastila Instrument când e deja activă → deschide Setări
+  /// (shortcut familiar; păstrăm comportamentul vechi al header-ului).
+  Widget _buildModeSwitcher() {
+    final inst = AppSettings.instance.instrument;
+    final chromatic = _chromaticMode;
+
+    Widget pill({
+      required bool active,
+      required Widget child,
+      required VoidCallback onTap,
+      required Color activeBorder,
+    }) {
+      return Expanded(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+              color: active
+                  ? Colors.white.withAlpha(22)
+                  : Colors.white.withAlpha(6),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: active
+                    ? activeBorder.withAlpha(160)
+                    : Colors.white.withAlpha(20),
+                width: active ? 1.4 : 1.0,
+              ),
+              boxShadow: active
+                  ? [
+                      BoxShadow(
+                        color: activeBorder.withAlpha(40),
+                        blurRadius: 18,
+                        spreadRadius: -6,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: child,
+          ),
+        ),
+      );
     }
 
-    return const SizedBox(height: 36);
+    return Row(
+      children: [
+        pill(
+          active: !chromatic,
+          activeBorder: _green,
+          // Când pastila Instrument e deja activă, tap deschide Setări
+          // (shortcut: schimbi rapid instrumentul/calibrarea). Dacă vii
+          // din Cromatic, tap-ul doar comută înapoi pe instrument.
+          onTap: () {
+            if (chromatic) {
+              AppSettings.instance.setChromaticMode(false);
+            } else {
+              _openSettings();
+            }
+          },
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(14),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(inst.emoji, style: const TextStyle(fontSize: 20)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      inst.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: chromatic ? Colors.white54 : Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      chromatic ? 'Comută înapoi' : _tuning.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        pill(
+          active: chromatic,
+          activeBorder: _green,
+          onTap: () {
+            if (!chromatic) AppSettings.instance.setChromaticMode(true);
+          },
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: chromatic
+                      ? _green.withAlpha(36)
+                      : Colors.white.withAlpha(14),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.piano_outlined,
+                  size: 20,
+                  color: chromatic ? _green : Colors.white60,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Cromatic',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: chromatic ? Colors.white : Colors.white54,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      chromatic ? 'Orice notă' : 'Orice notă muzicală',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildTuningSelector() {
@@ -1573,68 +1787,74 @@ class _TunerScreenState extends State<TunerScreen>
   }
 
   // Bara moduri: AUTO + AI Precision, două toggle-uri iOS.
+  //
+  // În modul cromatic AUTO nu mai are sens (nu există „coardă locked"
+  // când detectăm orice notă), așa că rămâne doar AI Precision —
+  // centered, ca să nu pară un toggle orfan într-un capăt.
   Widget _buildModeToggle() {
     final auto = _lockedString == null;
     final aiOn = _aiPrecisionEnabled;
+    final chromatic = _chromaticMode;
+
+    final autoToggle = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => auto ? _lockString(_tuning.notes.first) : _setAuto(),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.gps_fixed,
+            size: 15,
+            color: auto ? _green : Colors.white38,
+          ),
+          const SizedBox(width: 7),
+          Text(
+            'AUTO',
+            style: TextStyle(
+              color: auto ? Colors.white : Colors.white38,
+              fontWeight: FontWeight.bold,
+              fontSize: 12.5,
+              letterSpacing: 0.6,
+            ),
+          ),
+          const SizedBox(width: 9),
+          _IosToggle(value: auto, activeColor: _green),
+        ],
+      ),
+    );
+
+    final aiToggle = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _toggleAiPrecision,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.auto_awesome,
+            size: 15,
+            color: aiOn ? _aiPurple : Colors.white38,
+          ),
+          const SizedBox(width: 7),
+          Text(
+            'AI Precision',
+            style: TextStyle(
+              color: aiOn ? Colors.white : Colors.white38,
+              fontWeight: FontWeight.bold,
+              fontSize: 12.5,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(width: 9),
+          _IosToggle(value: aiOn, activeColor: _aiPurple, glow: true),
+        ],
+      ),
+    );
 
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        // ── AUTO ──
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => auto ? _lockString(_tuning.notes.first) : _setAuto(),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.gps_fixed,
-                size: 15,
-                color: auto ? _green : Colors.white38,
-              ),
-              const SizedBox(width: 7),
-              Text(
-                'AUTO',
-                style: TextStyle(
-                  color: auto ? Colors.white : Colors.white38,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12.5,
-                  letterSpacing: 0.6,
-                ),
-              ),
-              const SizedBox(width: 9),
-              _IosToggle(value: auto, activeColor: _green),
-            ],
-          ),
-        ),
-        // ── AI Precision ──
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _toggleAiPrecision,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.auto_awesome,
-                size: 15,
-                color: aiOn ? _aiPurple : Colors.white38,
-              ),
-              const SizedBox(width: 7),
-              Text(
-                'AI Precision',
-                style: TextStyle(
-                  color: aiOn ? Colors.white : Colors.white38,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12.5,
-                  letterSpacing: 0.3,
-                ),
-              ),
-              const SizedBox(width: 9),
-              _IosToggle(value: aiOn, activeColor: _aiPurple, glow: true),
-            ],
-          ),
-        ),
-      ],
+      mainAxisAlignment: chromatic
+          ? MainAxisAlignment.center
+          : MainAxisAlignment.spaceEvenly,
+      children: chromatic ? [aiToggle] : [autoToggle, aiToggle],
     );
   }
 
@@ -1653,6 +1873,7 @@ class _TunerScreenState extends State<TunerScreen>
         final active = _hasSignal && full == _note;
         final locked = _lockedString == full;
 
+        final bool justTuned = _justTuned.contains(full);
         final Color borderColor;
         final Color textColor;
         final Color fill;
@@ -1663,7 +1884,7 @@ class _TunerScreenState extends State<TunerScreen>
         } else if (tuned) {
           borderColor = _green;
           textColor = _green;
-          fill = _green.withAlpha(38);
+          fill = justTuned ? _green.withAlpha(90) : _green.withAlpha(38);
         } else if (active) {
           borderColor = _displayColor;
           textColor = _displayColor;
@@ -1676,28 +1897,33 @@ class _TunerScreenState extends State<TunerScreen>
 
         return GestureDetector(
           onTap: () => locked ? _setAuto() : _lockString(full),
-          child: Container(
-            width: 40,
-            height: 40,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: fill,
-              border: Border.all(
-                color: borderColor,
-                width: (locked || tuned || active) ? 2 : 1,
+          child: AnimatedScale(
+            scale: justTuned ? 1.35 : 1.0,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            child: Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: fill,
+                border: Border.all(
+                  color: borderColor,
+                  width: (locked || tuned || active) ? 2 : 1,
+                ),
               ),
-            ),
-            child: tuned && !locked
-                ? const Icon(Icons.check, color: _green, size: 18)
-                : Text(
-                    name,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: textColor,
+              child: tuned && !locked
+                  ? const Icon(Icons.check, color: _green, size: 18)
+                  : Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: textColor,
+                      ),
                     ),
-                  ),
+            ),
           ),
         );
       }),
@@ -1862,4 +2088,38 @@ class _TunerMeterPainter extends CustomPainter {
         oldDelegate.hasSignal != hasSignal ||
         oldDelegate.inTune != inTune;
   }
+}
+
+/// Strat de film grain (zgomot fin alb pe transparent) folosit ca overlay
+/// peste emblema din placeholder-ul idle. Reseed-ul la fiecare cadru, prin
+/// modificarea `seed`-ului din `_breath`, dă senzația vizuală de „live" —
+/// fără să distragă, dar perceptibil ca textură premium.
+class _FilmGrainPainter extends CustomPainter {
+  _FilmGrainPainter({required this.seed});
+
+  final double seed;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Densitate moderată: ~3% pixeli pictați la o regiune de 96×96 = ~280
+    // de puncte. Suficient pentru textură, ieftin pentru repaint la 60 fps.
+    final rng = Random((seed * 100000).round());
+    final count = (size.width * size.height * 0.035).round();
+    final paint = Paint()..style = PaintingStyle.fill;
+    for (var i = 0; i < count; i++) {
+      final dx = rng.nextDouble() * size.width;
+      final dy = rng.nextDouble() * size.height;
+      // Mix alb / verde-neon foarte subtil, ca grain-ul să se integreze cu
+      // paleta brandului în loc să arate ca „static TV".
+      final useGreen = rng.nextInt(7) == 0;
+      paint.color = useGreen
+          ? const Color(0xFF00E676).withAlpha(40 + rng.nextInt(70))
+          : Colors.white.withAlpha(25 + rng.nextInt(90));
+      canvas.drawCircle(Offset(dx, dy), 0.45, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _FilmGrainPainter oldDelegate) =>
+      oldDelegate.seed != seed;
 }

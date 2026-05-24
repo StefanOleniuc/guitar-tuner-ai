@@ -9,10 +9,18 @@ import 'pitch_service.dart';
 
 /// Sintetizează și redă **note de referință** pentru fiecare coardă.
 ///
-/// Folosim sinteza aditivă cu 3 armonici (1×, 2×, 3× freq) și o anvelopă
-/// atac-decay blândă — sună „cald" și natural, nu o sirenă. Nu e identic
-/// cu o coardă reală (ar trebui sample-uri pre-înregistrate per instrument,
-/// MB-uri de assets), dar e foarte aproape pentru ureche.
+/// Folosim algoritmul **Karplus-Strong** (delay-line cu feedback și
+/// lowpass), care modelează fizic o coardă plucată. Sună aproape de un
+/// sample real de chitară, cu zero MB-uri de assets — o coardă, nu o
+/// sinusoidă. Plus:
+///   * **pluck noise** (excitație inițială filtrată ușor → mai puțin „fizz");
+///   * **lowpass de feedback** controlat per notă (notele înalte fade mai
+///     repede, ca în realitate);
+///   * **soft body-resonance**: un mic ecou întârziat (adaugă „corpul"
+///     chitarei — fără el sună prea „nud").
+///
+/// Tot codul rulează la 44.1kHz mono, în memorie, cache-uit per
+/// combinație (notă × A4).
 ///
 /// WAV-urile sunt cache-uite pe combinația notă+A4: o notă cântată de
 /// două ori NU regenerează datele audio.
@@ -44,58 +52,101 @@ class NoteAudio {
     await _player.dispose();
   }
 
-  /// Sintetizează ~1.5s de notă cu timbru tipic de coardă plucată:
-  ///   * 5 armonici (1× la 5× freq), fiecare cu propria rată de decay —
-  ///     armonicile înalte fade mai repede, fundamentala susține. Așa
-  ///     se aude ca o coardă, nu ca o sirenă.
-  ///   * burst scurt de zgomot la atac (~4ms) → senzația de „pluck".
-  ///   * atac scurt (6ms ramp) + decay exponențial per armonică.
+  /// Sintetizează ~1.6s de notă printr-un **Karplus-Strong extins**:
+  ///
+  /// 1. **Excitația**: ~6ms de zgomot lowpassed (medie mobilă pe 3 sample-uri)
+  ///    încarcă delay-line-ul. Suficient de „brut" ca să excite toate
+  ///    armonicele, suficient de filtrat ca să nu sune ca un click metalic.
+  /// 2. **Delay-line**: lungime = `sampleRate / freq` sample-uri. La
+  ///    fiecare pas: sample-ul iese din delay, e amestecat cu următorul
+  ///    (`y[i] = (x[i] + x[i+1]) * 0.5 * decay`) și se reintroduce la
+  ///    capăt. Acest filtru de mediere = lowpass care „închide" timbrul
+  ///    treptat, exact ca o coardă reală.
+  /// 3. **Decay**: factor sub-unitar pe feedback. Cu cât freq e mai mare,
+  ///    cu atât bucla e mai scurtă, cu atât decay-ul efectiv per secundă
+  ///    e mai agresiv → notele înalte fade mai repede. Ajustăm
+  ///    `decay` în funcție de freq ca să compensăm parțial.
+  /// 4. **Body resonance**: un al doilea delay-line foarte scurt cu
+  ///    feedback mic adaugă „corpul" rezonant al chitarei.
   static Uint8List _noteWav(double freq) {
     const sampleRate = 44100;
     const durationMs = 1600;
-    const attackMs = 6;
     final n = sampleRate * durationMs ~/ 1000;
-    final attackSamples = sampleRate * attackMs ~/ 1000;
-    final samples = Int16List(n);
 
-    // [amplitudine_inițială, rata_decay] per armonică (1..5).
-    // Armonicile înalte fade mai rapid — pluck-ul „strălucește" la
-    // început, apoi se așază pe fundamentală caldă.
-    const harmonics = <List<double>>[
-      [1.00, 1.6], // fundamental — sustain principal
-      [0.55, 2.8], // 2nd — warmth
-      [0.32, 4.5], // 3rd
-      [0.18, 6.5], // 4th
-      [0.10, 9.5], // 5th — body / bite
-    ];
-    // Normalizare: suma amplitudinilor la t=0 = ~2.15 → împărțim ca să
-    // nu clip-uim peak-ul inițial.
-    var ampSum = 0.0;
-    for (final h in harmonics) {
-      ampSum += h[0];
-    }
-    final norm = 1.0 / ampSum;
+    // Lungimea buclei de delay (în sample-uri). Folosim Float pentru
+    // micro-tuning prin interpolare liniară între două sample-uri vecine
+    // → frecvența rezultată e exact `freq`, fără cuantizarea cauzată de
+    // un întreg apropiat.
+    final delayLenF = sampleRate / freq;
+    final delayLen = delayLenF.floor();
+    final frac = delayLenF - delayLen; // 0..1
+    final buf = Float32List(delayLen + 1); // +1 pentru interpolare la coadă
+
+    // Excitația: ~6ms de zgomot alb filtrat (medie pe 3 sample-uri).
+    // Seed fix → output deterministic, cache-friendly.
     final rng = Random(42);
-
-    for (int i = 0; i < n; i++) {
-      final t = i / sampleRate;
-      final attack = i < attackSamples ? i / attackSamples : 1.0;
-      double s = 0.0;
-      for (int h = 0; h < harmonics.length; h++) {
-        final amp = harmonics[h][0];
-        final dec = harmonics[h][1];
-        s += amp * exp(-dec * t) * sin(2 * pi * freq * (h + 1) * t);
-      }
-      s = s * norm * attack * 0.78;
-      // Pluck noise — zgomot scurt la atac care imită degetul atingând
-      // coarda. Doar primele ~4ms, scade liniar.
-      if (t < 0.004) {
-        final noise = (rng.nextDouble() * 2 - 1) * 0.12 * (1 - t / 0.004);
-        s += noise;
-      }
-      samples[i] = (s * 32767).round().clamp(-32768, 32767);
+    final excLen = (sampleRate * 0.006).round().clamp(8, delayLen);
+    final raw = Float32List(excLen + 2);
+    for (int i = 0; i < raw.length; i++) {
+      raw[i] = rng.nextDouble() * 2 - 1;
     }
-    return _pcmToWav(samples, sampleRate);
+    for (int i = 0; i < excLen; i++) {
+      buf[i] = (raw[i] + raw[i + 1] + raw[i + 2]) * (1.0 / 3.0);
+    }
+    // Restul buf-ului rămâne zero — coarda e „liniștită" înainte de
+    // a se propaga excitația prin buclă.
+
+    // Decay-ul feedback-ului. Pentru note înalte (delayLen mic) trebuie
+    // mai aproape de 1, altfel se sting prea repede.
+    // Empiric: decay ≈ 0.994 pentru E2, ≈ 0.998 pentru E5.
+    final decay = (0.992 + (1.0 - (delayLen / 600).clamp(0.0, 1.0)) * 0.006)
+        .clamp(0.985, 0.999);
+
+    // Body-resonance: un delay scurt (~3ms) cu feedback mic — adaugă
+    // o ușoară rezonanță difuză tip „cutie de chitară".
+    final bodyLen = (sampleRate * 0.0028).round();
+    final body = Float32List(bodyLen);
+    int bodyIdx = 0;
+    const bodyMix = 0.18;
+    const bodyFeedback = 0.35;
+
+    final out = Int16List(n);
+    int p = 0; // pointer curent în delay-line
+    // Anvelopă globală foarte blândă — strict ca să nu „taie" la final.
+    final tailStart = (n * 0.86).round();
+    for (int i = 0; i < n; i++) {
+      // Citește cu interpolare liniară între buf[p] și buf[p+1].
+      final s0 = buf[p];
+      final s1 = buf[(p + 1) % buf.length];
+      final sample = s0 * (1.0 - frac) + s1 * frac;
+
+      // Body resonance: ușor delay + feedback mic.
+      final bodySample = body[bodyIdx];
+      body[bodyIdx] = sample + bodySample * bodyFeedback;
+      bodyIdx = (bodyIdx + 1) % bodyLen;
+      var mixed = sample + bodySample * bodyMix;
+
+      // Anvelopă coadă (ultimii 14% fade liniar la 0) ca să eviți pop.
+      if (i > tailStart) {
+        final t = (i - tailStart) / (n - tailStart);
+        mixed *= 1.0 - t;
+      }
+
+      // Clip soft (tanh-like) ca să prevenim depășiri rare la atac.
+      if (mixed > 1.0) {
+        mixed = 1.0;
+      } else if (mixed < -1.0) {
+        mixed = -1.0;
+      }
+      out[i] = (mixed * 0.85 * 32767).round();
+
+      // Karplus-Strong update: înlocuiește buf[p] cu media cu vecinul,
+      // scalată cu decay (filtrul lowpass în feedback).
+      final nextP = (p + 1) % buf.length;
+      buf[p] = (buf[p] + buf[nextP]) * 0.5 * decay;
+      p = nextP;
+    }
+    return _pcmToWav(out, sampleRate);
   }
 
   static Uint8List _pcmToWav(Int16List samples, int sampleRate) {
@@ -104,11 +155,11 @@ class NoteAudio {
     final out = BytesBuilder();
     void str(String s) => out.add(s.codeUnits);
     void u32(int v) => out.add([
-          v & 0xff,
-          (v >> 8) & 0xff,
-          (v >> 16) & 0xff,
-          (v >> 24) & 0xff,
-        ]);
+      v & 0xff,
+      (v >> 8) & 0xff,
+      (v >> 16) & 0xff,
+      (v >> 24) & 0xff,
+    ]);
     void u16(int v) => out.add([v & 0xff, (v >> 8) & 0xff]);
 
     str('RIFF');

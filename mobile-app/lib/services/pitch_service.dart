@@ -163,8 +163,12 @@ class PitchService {
     final absAt1 = nearestAbs(freq);
     if (absAt1 <= 35) return freq;
 
-    // Departe de orice coardă → probabil eroare de octavă.
-    const factors = [1.0, 0.5, 0.25, 2.0];
+    // Departe de orice coardă → probabil eroare de octavă/armonică.
+    // Acoperim subharmonice până la /16 (corzi groase: ex. 36Hz ≈ D3/4)
+    // și superharmonice până la x4 (YIN sare ocazional pe H2-H4 la corzi
+    // subțiri). Includem și factori 3 / 1/3 pentru cvinta perfectă (a 3-a
+    // armonică). Penalizarea de continuitate (`ref`) îi taie pe cei improbabili.
+    const factors = [1.0, 0.5, 2.0, 0.25, 4.0, 0.125, 0.0625, 1.0 / 3.0, 3.0];
     double bestFactor = 1.0;
     double bestScore = double.infinity;
 
@@ -193,5 +197,26 @@ class PitchService {
       return freq * bestFactor;
     }
     return freq;
+  }
+
+  /// Returnează `true` dacă [freq] cade la cel mult [maxCents] (absolut)
+  /// de cea mai apropiată coardă din [tuningNotes]. Folosit ca "plausibility
+  /// gate" — frecvențele YIN care nici după `foldToTuning` nu se apropie de
+  /// o coardă reală sunt zgomot/armonice neidentificate și ar trebui ignorate
+  /// (altfel ajung clampate la ±50¢ și mint utilizatorul).
+  bool isPlausibleForTuning(
+    double freq,
+    List<String> tuningNotes, {
+    double maxCents = 75,
+  }) {
+    if (freq <= 0) return false;
+    double best = double.infinity;
+    for (final n in tuningNotes) {
+      final target = noteToFrequency(n, a4: a4);
+      if (target <= 0) continue;
+      final c = (1200 * _log2(freq / target)).abs();
+      if (c < best) best = c;
+    }
+    return best <= maxCents;
   }
 }

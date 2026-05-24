@@ -165,7 +165,11 @@ class _TuningHistoryScreenState extends State<TuningHistoryScreen> {
               'Acordează-ți instrumentul în Tuner și sesiunile complete '
               'vor apărea aici automat.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white60, fontSize: 14, height: 1.4),
+              style: TextStyle(
+                color: Colors.white60,
+                fontSize: 14,
+                height: 1.4,
+              ),
             ),
           ],
         ),
@@ -196,9 +200,11 @@ class _SessionTile extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
-        color: const Color(0x10FFFFFF),
+        // Sesiunile complete primesc un fundal verde subtil + border verde
+        // — același limbaj vizual ca starea „in tune" din tuner.
+        color: complete ? _green.withAlpha(14) : const Color(0x10FFFFFF),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _track),
+        border: Border.all(color: complete ? _green.withAlpha(65) : _track),
       ),
       child: Row(
         children: [
@@ -312,11 +318,7 @@ class _SevenDayChart extends StatelessWidget {
     // counts[6] = azi, counts[0] = acum 6 zile.
     final counts = List<int>.filled(7, 0);
     for (final s in sessions) {
-      final d = DateTime(
-        s.createdAt.year,
-        s.createdAt.month,
-        s.createdAt.day,
-      );
+      final d = DateTime(s.createdAt.year, s.createdAt.month, s.createdAt.day);
       final diff = today.difference(d).inDays;
       if (diff >= 0 && diff < 7) counts[6 - diff]++;
     }
@@ -335,8 +337,11 @@ class _SevenDayChart extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.calendar_view_week_rounded,
-                  color: _green, size: 18),
+              const Icon(
+                Icons.calendar_view_week_rounded,
+                color: _green,
+                size: 18,
+              ),
               const SizedBox(width: 8),
               const Text(
                 'Activitate · 7 zile',

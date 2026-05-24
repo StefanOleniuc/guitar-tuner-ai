@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../screens/settings_screen.dart';
+import '../services/active_page.dart';
 import 'app_logo_banner.dart';
 import 'sign_up_badge.dart';
 
@@ -33,7 +34,17 @@ class BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
       centerTitle: true,
       leadingWidth: SignUpBadge.leadingWidth,
       leading: const SignUpBadge(),
-      title: const AppLogoBanner(),
+      // Tap pe wordmark → shortcut „Home" către Acordor. E intuitiv
+      // (logo-ul e mereu un home-button în app-uri moderne) și ajută
+      // userii care nu observă bara de jos.
+      title: InkWell(
+        onTap: () => ActivePage.instance.requestTab(ActivePage.tunerIndex),
+        borderRadius: BorderRadius.circular(8),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: AppLogoBanner(),
+        ),
+      ),
       actions: showSettings
           ? [
               IconButton(
@@ -46,8 +57,8 @@ class BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 
   static void _openSettings(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
   }
 }

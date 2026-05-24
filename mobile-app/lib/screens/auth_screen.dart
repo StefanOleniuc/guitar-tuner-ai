@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/active_page.dart';
 import '../services/auth_service.dart';
 import '../widgets/app_background.dart';
 import '../widgets/app_dialog.dart';
@@ -176,18 +177,36 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Row(
                     children: [
                       // Logo aplicație + wordmark → ecranul nu pare un
-                      // template generic de login.
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.asset(
-                          'assets/images/GTune_logo_updated.png',
-                          width: 34,
-                          height: 34,
-                          fit: BoxFit.cover,
+                      // template generic de login. În modul „tab" (al
+                      // 3-lea tab al shell-ului) e tappable: shortcut
+                      // direct la Acordor pentru cine s-a rătăcit aici.
+                      InkWell(
+                        onTap: inTab
+                            ? () => ActivePage.instance.requestTab(
+                                ActivePage.tunerIndex,
+                              )
+                            : null,
+                        borderRadius: BorderRadius.circular(10),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 4,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Image.asset(
+                                'assets/images/GTune_emblem_transparent.png',
+                                width: 34,
+                                height: 34,
+                                fit: BoxFit.contain,
+                              ),
+                              const SizedBox(width: 10),
+                              const AppLogoBanner(fontSize: 18),
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      const AppLogoBanner(fontSize: 18),
                       const Spacer(),
                       if (!inTab)
                         TextButton(

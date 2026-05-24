@@ -39,6 +39,13 @@ class _MainShellState extends State<MainShell> with RouteAware {
     _controller = PageController(initialPage: _index);
     ActivePage.instance.setIndex(_index);
     ActivePage.instance.setShellInForeground(true);
+    // Înregistrăm handler-ul prin care ecranele „interioare" (ex. tap
+    // pe logo în AuthScreen tab) pot cere navigarea la alt tab.
+    ActivePage.instance.tabRequestHandler = (i) {
+      if (!mounted) return;
+      if (i < 0 || i > 2) return;
+      _controller.jumpToPage(i);
+    };
     // Dacă userul se loghează în timp ce e pe tab-ul Auth (al 3-lea),
     // PageView pierde acel tab → navigăm pe Acordor.
   }
@@ -53,6 +60,9 @@ class _MainShellState extends State<MainShell> with RouteAware {
   @override
   void dispose() {
     appRouteObserver.unsubscribe(this);
+    if (ActivePage.instance.tabRequestHandler != null) {
+      ActivePage.instance.tabRequestHandler = null;
+    }
     _controller.dispose();
     super.dispose();
   }
@@ -132,11 +142,11 @@ class _MainShellState extends State<MainShell> with RouteAware {
                 //   2. tab-ul Cont când userul NU e logat (e ecranul de
                 //      sign-up/sign-in, vrem flux focused);
                 //   3. tab-ul Acordor înainte de aprobarea microfonului.
-                final keyboardUp =
-                    MediaQuery.of(context).viewInsets.bottom > 0;
+                final keyboardUp = MediaQuery.of(context).viewInsets.bottom > 0;
                 final authed = AuthService.instance.isAuthenticated;
                 final onAuthTab = _index == 2 && !authed;
-                final tunerNotReady = _index == ActivePage.tunerIndex &&
+                final tunerNotReady =
+                    _index == ActivePage.tunerIndex &&
                     !ActivePage.instance.barAllowed;
                 final showBar = !keyboardUp && !onAuthTab && !tunerNotReady;
                 return IgnorePointer(
