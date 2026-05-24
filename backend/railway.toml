@@ -1,0 +1,10 @@
+[build]
+builder = "nixpacks"
+# Aplică constraints.txt (setuptools<81) ÎNAINTE de requirements.txt
+# — necesare pentru hmmlearn/resampy din lanțul CREPE.
+buildCommand = "pip install 'setuptools<81' && pip install -r requirements.txt"
+
+[deploy]
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
