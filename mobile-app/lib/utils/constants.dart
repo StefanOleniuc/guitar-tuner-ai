@@ -4,7 +4,7 @@ class ApiConstants {
   ApiConstants._();
 
   static const String _baseUrlDebug = 'http://192.168.1.129:8000';
-  static const String _baseUrlProd = 'https://guitar-tuner-ai.onrender.com';
+  static const String _baseUrlProd = 'https://guitar-tuner-ai.up.railway.app';
 
   static String get apiBaseUrl => kDebugMode ? _baseUrlDebug : _baseUrlProd;
 
