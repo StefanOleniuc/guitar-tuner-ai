@@ -1,4 +1,12 @@
-"""Securitate autentificare: hash de parole (bcrypt) + token-uri JWT."""
+"""Securitate autentificare: hash de parole (bcrypt) + token-uri JWT.
+
+  • bcrypt: hash unidirecțional cu salt automat — standard industrial
+    pentru stocarea parolelor (chiar dacă baza de date e compromisă,
+    parolele NU pot fi recuperate).
+  • JWT (HS256): token semnat cu un secret server-side. Clientul îl
+    păstrează și îl trimite la fiecare request în header-ul
+    `Authorization: Bearer <token>`. Valabilitate: 30 zile.
+"""
 
 import os
 from datetime import datetime, timedelta, timezone
@@ -6,8 +14,9 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
 
-# Secretul JWT — în producție se setează prin variabila de mediu.
-# Valoarea default e DOAR pentru dezvoltare locală.
+# Secretul JWT — în producție se setează prin variabila de mediu
+# `GTUNE_JWT_SECRET` (pe Railway). Valoarea default e DOAR pentru dev local.
+# Dacă cineva îl află, poate emite token-uri valide pentru orice user.
 _SECRET: str = os.environ.get("GTUNE_JWT_SECRET", "gtune-dev-secret-change-me")
 _ALGORITHM = "HS256"
 _TOKEN_DAYS = 30

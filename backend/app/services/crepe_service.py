@@ -1,3 +1,13 @@
+"""Wrapper pentru modelul CREPE (Convolutional Representation for Pitch Estimation).
+
+CREPE este un CNN pre-antrenat (Kim et al., 2018) care estimă frecvența
+fundamentală într-un semnal audio cu precizie sub 1 cent. Folosim varianta
+"medium" — echilibru între acuratețe și timp de inferență pe CPU.
+
+Input așteptat: audio PCM16 mono la 16 kHz, ~1.5 secunde.
+Output: frecvența în Hz + confidence (0..1) + durată analizată.
+"""
+
 import logging
 import time
 
