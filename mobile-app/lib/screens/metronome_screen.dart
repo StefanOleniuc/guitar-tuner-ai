@@ -261,9 +261,8 @@ class _MetronomeScreenState extends State<MetronomeScreen>
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: active ? color : color.withAlpha(40),
-              boxShadow: active
-                  ? [BoxShadow(color: color.withAlpha(130), blurRadius: 12)]
-                  : null,
+              // Fără BoxShadow — pe AMOLED, blur-ul activ alterna pe fiecare
+              // bătaie și se vedea ca o pâlpâire slabă pe tot ecranul.
             ),
           ),
         );
@@ -282,20 +281,16 @@ class _MetronomeScreenState extends State<MetronomeScreen>
           // _pulse: 0 imediat după bătaie → 1 la final. „Pop" descrescător.
           final pop = running ? (1 - _pulse.value) : 0.0;
           return Transform.scale(
-            scale: 1.0 + 0.07 * pop,
+            scale: 1.0 + 0.05 * pop,
             child: Container(
               width: 116,
               height: 116,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                // Intensitatea de „bătaie" e dată DOAR de culoarea internă
-                // și de border — fără BoxShadow exterior care făcea pete
-                // albe pe fundalul negru când pulsau.
-                color: _green.withAlpha(running ? (38 + 50 * pop).round() : 26),
-                border: Border.all(
-                  color: _green.withAlpha((140 + 90 * pop).round()),
-                  width: 2,
-                ),
+                // Alpha constant — modulația pe fiecare bătaie cauza
+                // recompoziție de layer și pâlpâire pe AMOLED.
+                color: _green.withAlpha(38),
+                border: Border.all(color: _green.withAlpha(170), width: 2),
               ),
               child: Icon(
                 running ? Icons.stop_rounded : Icons.play_arrow_rounded,
@@ -340,9 +335,7 @@ class _MetronomeScreenState extends State<MetronomeScreen>
                       color: _engine.beatsPerBar == n ? _green : _card,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: _engine.beatsPerBar == n
-                            ? _green
-                            : _track,
+                        color: _engine.beatsPerBar == n ? _green : _track,
                       ),
                     ),
                     child: Text(
@@ -366,10 +359,7 @@ class _MetronomeScreenState extends State<MetronomeScreen>
 
   // ── Tap-tempo ───────────────────────────────────────────────────
   Widget _buildTapTempo() {
-    return _TapTempoButton(
-      onTap: _tapTempo,
-      recentTaps: _taps.length,
-    );
+    return _TapTempoButton(onTap: _tapTempo, recentTaps: _taps.length);
   }
 }
 
@@ -443,7 +433,8 @@ class _TapTempoButtonState extends State<_TapTempoButton>
                   color: Color.lerp(_card, _green.withAlpha(60), pulse * 0.85),
                   borderRadius: BorderRadius.circular(22),
                   border: Border.all(
-                    color: Color.lerp(
+                    color:
+                        Color.lerp(
                           _track,
                           _green,
                           (pulse * 0.85).clamp(0.0, 1.0),
@@ -581,17 +572,12 @@ class _HoldButtonState extends State<_HoldButton> {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: _pressed ? _green.withAlpha(55) : const Color(0xFF1F1F1F),
-            border: Border.all(
-              color: _pressed ? _green : _track,
-              width: 1.6,
-            ),
+            border: Border.all(color: _pressed ? _green : _track, width: 1.6),
           ),
           child: Icon(
             widget.icon,
             size: 28,
-            color: !on
-                ? Colors.white12
-                : (_pressed ? _green : Colors.white70),
+            color: !on ? Colors.white12 : (_pressed ? _green : Colors.white70),
           ),
         ),
       ),

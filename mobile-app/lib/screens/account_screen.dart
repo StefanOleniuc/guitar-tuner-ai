@@ -138,21 +138,31 @@ class _ProfileHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Avatar sobru: cerc întunecat cu border discret și inițială albă.
-        // Fără halou neon — design liniștit, modern, nu țipător.
+        // Avatar verde — în stilul restului de insigne circulare ale
+        // aplicației (gradient verde subtil + border verde discret).
         Container(
           width: 84,
           height: 84,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: const Color(0xFF1E1E24),
-            border: Border.all(color: Colors.white.withAlpha(28), width: 1),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                const Color(0xFF00E676).withAlpha(48),
+                const Color(0xFF00E676).withAlpha(16),
+              ],
+            ),
+            border: Border.all(
+              color: const Color(0xFF00E676).withAlpha(110),
+              width: 1.5,
+            ),
           ),
           child: Text(
             initial,
             style: const TextStyle(
-              color: Colors.white,
+              color: Color(0xFF00E676),
               fontWeight: FontWeight.w700,
               fontSize: 34,
               letterSpacing: 0.5,

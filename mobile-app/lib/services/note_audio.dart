@@ -28,7 +28,13 @@ class NoteAudio {
   NoteAudio._();
   static final NoteAudio instance = NoteAudio._();
 
-  final AudioPlayer _player = AudioPlayer();
+  // Pool de 3 playere — round-robin. Pe Android, `audioplayers` se poate
+  // bloca într-o tranziție stop↔play dacă userul dă tap-uri în rafală pe
+  // același player (rămâne într-un state "stopping" și nu mai răspunde).
+  // Cu un pool, fiecare tap merge pe alt player → chiar dacă unul se
+  // blochează temporar, următoarele tap-uri se aud imediat.
+  final List<AudioPlayer> _pool = [AudioPlayer(), AudioPlayer(), AudioPlayer()];
+  int _poolIdx = 0;
   final Map<String, Uint8List> _cache = {};
 
   /// Generează (dacă e nevoie) și redă nota dată. Întrerupe sunetul anterior
@@ -38,8 +44,17 @@ class NoteAudio {
       final freq = PitchService.noteToFrequency(fullNote, a4: a4);
       final key = '${fullNote}_${a4.toStringAsFixed(1)}';
       final wav = _cache.putIfAbsent(key, () => _noteWav(freq));
-      await _player.stop();
-      await _player.play(BytesSource(wav));
+
+      // Stop pe playerul curent (cel care încă mai sună), fire-and-forget
+      // — NU așteptăm; await-ul pe stop a fost cauza blocajelor.
+      final prev = _pool[_poolIdx];
+      unawaited(prev.stop().catchError((_) {}));
+
+      // Pick următorul player din pool și redă pe el. Round-robin lasă
+      // playerului anterior ~2 tap-uri ca să se recupereze din stop().
+      _poolIdx = (_poolIdx + 1) % _pool.length;
+      final next = _pool[_poolIdx];
+      await next.play(BytesSource(wav));
     } catch (e) {
       AppLogger.w('🔶 [NoteAudio] Redare eșuată ($fullNote): $e');
     }
@@ -49,7 +64,9 @@ class NoteAudio {
   /// nu o facem explicit (singleton-ul trăiește cât app-ul).
   Future<void> dispose() async {
     _cache.clear();
-    await _player.dispose();
+    for (final p in _pool) {
+      await p.dispose();
+    }
   }
 
   /// Sintetizează ~1.6s de notă printr-un **Karplus-Strong extins**:

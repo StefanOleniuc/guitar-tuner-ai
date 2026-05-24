@@ -12,7 +12,7 @@ from email.mime.text import MIMEText
 
 import dns.exception
 import dns.resolver
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app import auth_db
@@ -216,10 +216,14 @@ def _send_reset_email(to_email: str, code: str) -> None:
 
 
 @router.post("/reset-password")
-def reset_password(req: ResetRequest) -> dict[str, str]:
+def reset_password(
+    req: ResetRequest, background_tasks: BackgroundTasks
+) -> dict[str, str]:
     """Pasul 1: generează OTP și îl trimite pe email.
 
     Răspuns mereu generic — nu dezvăluim dacă adresa există în baza de date.
+    Trimiterea email-ului rulează în background (SMTP poate dura 5–10s pe
+    Railway), altfel clientul dă timeout și userul vede „serverul nu răspunde”.
     """
     email = req.email.strip().lower()
     row = auth_db.get_user_by_email(email)
@@ -229,10 +233,14 @@ def reset_password(req: ResetRequest) -> dict[str, str]:
             code,
             datetime.now(timezone.utc) + timedelta(minutes=_OTP_VALID_MINUTES),
         )
-        try:
-            _send_reset_email(email, code)
-        except Exception as exc:
-            logger.error("🔐 [auth] Eroare trimitere email reset: %s", exc)
+
+        def _send_safe(to: str, c: str) -> None:
+            try:
+                _send_reset_email(to, c)
+            except Exception as exc:
+                logger.error("🔐 [auth] Eroare trimitere email reset: %s", exc)
+
+        background_tasks.add_task(_send_safe, email, code)
     logger.info("🔐 [auth] Resetare parolă cerută pentru: %s", email)
     return {
         "message": "Dacă există un cont cu această adresă, "

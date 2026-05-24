@@ -315,10 +315,19 @@ class _AuthScreenState extends State<AuthScreen> {
                                 ),
                               ),
                             ),
-                          if (_error != null) ...[
-                            const SizedBox(height: 6),
-                            _errorBox(_error!),
-                          ],
+                          // Animat: apariția/dispariția erorii face un slide
+                          // smooth în loc de salt brusc al layout-ului.
+                          AnimatedSize(
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOut,
+                            alignment: Alignment.topCenter,
+                            child: _error == null
+                                ? const SizedBox(width: double.infinity)
+                                : Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: _errorBox(_error!),
+                                  ),
+                          ),
                           const SizedBox(height: 18),
                           _submitButton(),
                           const SizedBox(height: 18),
