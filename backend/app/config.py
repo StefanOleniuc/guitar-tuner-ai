@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     SENDGRID_FROM_EMAIL: str = "gtune.app@gmail.com"
     SENDGRID_FROM_NAME: str = "GTune AI"
 
+    # URL conexiune PostgreSQL. Pe Railway e setat automat de plugin-ul
+    # Postgres (variabila se numește `DATABASE_URL`). Format:
+    # postgresql://user:pass@host:port/dbname
+    DATABASE_URL: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
