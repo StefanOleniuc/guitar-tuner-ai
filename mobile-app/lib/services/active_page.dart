@@ -1,0 +1,58 @@
+import 'package:flutter/foundation.dart';
+
+/// Notifier global pentru tab-ul vizibil curent în shell-ul principal.
+///
+/// Are două surse de adevăr:
+///   * `_index`            — pagina activă din `PageView` (Acordor / Metronom).
+///   * `_shellInForeground` — există vreo rută pushed peste shell?
+///                            (Setări, Auth) — atunci niciun tab nu e vizibil.
+///
+/// Paginile (Tuner, Metronom) ascultă `visibleIndex` ca să-și gestioneze
+/// resursele scumpe (microfon, audio): pornesc cât tab-ul lor e vizibil,
+/// se opresc imediat ce nu mai e.
+class ActivePage extends ChangeNotifier {
+  ActivePage._();
+  static final ActivePage instance = ActivePage._();
+
+  static const int tunerIndex = 0;
+  static const int metronomeIndex = 1;
+
+  int _index = tunerIndex;
+  bool _shellInForeground = true;
+  // Default `false` — bara stă ASCUNSĂ pe Acordor până când Tuner confirmă
+  // explicit că are acces la microfon (vezi `setBarAllowed(true)`). Așa
+  // nu apare un flash de bară peste ecranul de permisiune la prima
+  // pornire. Pe celelalte taburi (Metronom, Cont) bara se afișează
+  // oricum (`_index != tunerIndex`).
+  bool _barAllowed = false;
+
+  int get index => _index;
+  bool get shellInForeground => _shellInForeground;
+
+  /// Index-ul tab-ului vizibil utilizatorului SAU `null` dacă shell-ul
+  /// e ascuns de o rută pushed (Setări / Auth / Metronom-screen vechi).
+  int? get visibleIndex => _shellInForeground ? _index : null;
+
+  /// `true` cât bara de navigație jos poate fi afișată. `false` cât timp
+  /// un ecran ocupă full-screen-ul (ex: ecranul de cerere acces microfon)
+  /// — userul are nevoie să vadă conținutul nedistras pe tot ecranul.
+  bool get barAllowed => _barAllowed;
+
+  void setIndex(int v) {
+    if (_index == v) return;
+    _index = v;
+    notifyListeners();
+  }
+
+  void setShellInForeground(bool v) {
+    if (_shellInForeground == v) return;
+    _shellInForeground = v;
+    notifyListeners();
+  }
+
+  void setBarAllowed(bool v) {
+    if (_barAllowed == v) return;
+    _barAllowed = v;
+    notifyListeners();
+  }
+}

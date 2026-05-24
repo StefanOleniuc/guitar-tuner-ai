@@ -11,26 +11,22 @@ double _log2(double x) => log(x) / ln2;
 
 class PitchService {
   static const int sampleRate = 16000;
-  // 2048 sample = 128 ms @ 16 kHz: suficient pentru E2 (~10 perioade),
-  // dar de 2x mai rapid decât 4096 → senzație real-time.
+  // 128ms @ 16kHz — suficient pentru E2, răspuns real-time.
   static const int bufferSize = 2048;
 
-  // Referința de acordaj A4 (Hz). Setată din AppSettings (calibrare).
-  // Afectează toate conversiile notă↔frecvență din acest serviciu.
+  // Referința de acordaj A4 (Hz), setată din setări.
   double a4 = 440;
 
-  // 0.0.7 folosește parametri numiți (audioSampleRate este double)
   final PitchDetector _pitchDetector = PitchDetector(
     audioSampleRate: sampleRate.toDouble(),
     bufferSize: bufferSize,
   );
 
-  // PCM16 = 2 bytes/sample. Fereastră glisantă cu overlap: avansăm doar
-  // cu un „hop" (jumătate de fereastră, ~64 ms) → analiză deasă, lină.
+  // Fereastră glisantă PCM16, hop = jumătate din fereastră (~64ms).
   Uint8List _buf = Uint8List(0);
 
   static const int _windowBytes = bufferSize * 2;
-  static const int _hopBytes = bufferSize; // jumătate fereastră în bytes
+  static const int _hopBytes = bufferSize;
 
   static const List<String> _noteNames = [
     'C',
@@ -57,8 +53,7 @@ class PitchService {
 
     PitchResult result = PitchResult.empty();
 
-    // Procesăm toate ferestrele disponibile (cu overlap), păstrând-o pe
-    // cea mai recentă → fără acumulare de latență, mereu pe „acum".
+    // Procesăm ferestrele cu overlap, păstrând cea mai recentă.
     while (_buf.length >= _windowBytes) {
       final window = Uint8List.sublistView(_buf, 0, _windowBytes);
       try {
@@ -78,7 +73,7 @@ class PitchService {
         AppLogger.e('❌ [PitchService] Buffer audio invalid', error: e);
         result = PitchResult.empty();
       }
-      // Glisăm cu un hop (overlap = fereastră - hop)
+      // Glisăm cu un hop.
       _buf = Uint8List.sublistView(_buf, _hopBytes);
     }
 
@@ -97,10 +92,7 @@ class PitchService {
     return (1200 * _log2(detected / target)).clamp(-50.0, 50.0);
   }
 
-  /// Conversie notă → frecvență. [a4] e referința de acordaj (440 Hz
-  /// standard); apelanții interni pasează [this.a4] (calibrarea curentă).
   static double noteToFrequency(String note, {double a4 = 440}) {
-    // Separă numele notei (literă + opțional #) de octavă (cifrele finale)
     final match = RegExp(r'^([A-G]#?)(-?\d+)$').firstMatch(note);
     if (match == null) return 0;
     final nameIndex = _noteNames.indexOf(match.group(1)!);
@@ -122,8 +114,7 @@ class PitchService {
     for (final n in tuningNotes) {
       final target = noteToFrequency(n, a4: a4);
       if (target <= 0) continue;
-      // Selecție după distanța REALĂ (neclampată) — altfel note
-      // îndepărtate ar fi egale la ±50 și s-ar confunda (ex. E2 vs E4).
+      // Distanță neclampată — evită confuzia E2 vs E4 la ±50¢.
       final raw = 1200 * _log2(freq / target);
       if (raw.abs() < bestAbsRaw) {
         bestAbsRaw = raw.abs();
@@ -132,23 +123,18 @@ class PitchService {
       }
     }
 
-    // Afișăm cenții clampați la ±50 față de coarda aleasă
+    // Afișăm cenții clampați la ±50¢.
     final displayCents = bestRawCents.clamp(-50.0, 50.0);
     return (note: bestNote, cents: displayCents);
   }
 
-  // La ciupit tare, YIN se agață des de armonica a 2-a (2x) sau semnalul
-  // clipează → frecvență raportată greșit (de obicei un octav mai sus).
-  // Cum știm notele acordajului, alegem factorul de octavă (x1, x½, x¼,
-  // x2) care aduce frecvența cel mai aproape de o coardă. Nota corect
-  // ciupită rămâne la x1 (cea mai mică distanță), deci E2/E4 NU se
-  // confundă.
-  /// [ref] = frecvența stabilă recentă (0 = necunoscută). Folosită pentru
-  /// dezambiguizarea octavei: ex. un E4 care dă eroarea de octavă (~165Hz)
-  /// poate plia la E2 SAU E4 (ambele la ~0¢) — alegem după continuitate.
-  double foldToTuning(double freq, List<String> tuningNotes,
-      {double ref = 0}) {
+  // Corectează erorile de octavă YIN (armonice). [ref] = frecvența recentă
+  // pentru dezambiguizarea octavei prin continuitate.
+  double foldToTuning(double freq, List<String> tuningNotes, {double ref = 0}) {
     if (freq <= 0) return freq;
+
+    // Fără referință de continuitate nu pliem — risc de octavă greșită.
+    if (ref <= 0) return freq;
 
     double nearestAbs(double f) {
       double best = double.infinity;
@@ -161,9 +147,7 @@ class PitchService {
       return best;
     }
 
-    // Limitele plauzibile = min/max ale acordajului, ±1 octavă marjă.
-    // Derivat din acordaj (nu hardcodat) → merge la fel pentru bas
-    // (E1 ~41Hz) ca pentru vioară/mandolină (E5 ~659Hz).
+    // Limite plauzibile derivate din acordaj (±1 octavă marjă).
     double loTarget = double.infinity;
     double hiTarget = 0;
     for (final n in tuningNotes) {
@@ -176,11 +160,10 @@ class PitchService {
     final loBound = loTarget * 0.5;
     final hiBound = hiTarget * 2.0;
 
-    // Dacă frecvența brută (x1) e deja aproape de o coardă, NU pliem.
     final absAt1 = nearestAbs(freq);
     if (absAt1 <= 35) return freq;
 
-    // Raw e departe de orice coardă → probabil eroare de octavă/armonică.
+    // Departe de orice coardă → probabil eroare de octavă.
     const factors = [1.0, 0.5, 0.25, 2.0];
     double bestFactor = 1.0;
     double bestScore = double.infinity;
@@ -193,11 +176,9 @@ class PitchService {
 
       double score = a;
       if (ref > 0) {
-        // Continuitate: rămânem pe octava coardei pe care suntem deja
+        // Penalizăm distanța față de referința recentă (continuitate).
         score += (1200 * _log2(cand / ref)).abs() * 0.5;
       } else {
-        // Fără context: penalizăm deplasarea de octavă; la egalitate
-        // preferăm să URCĂM (eroarea YIN dominantă e octavă-prea-jos)
         score += _log2(f).abs() * 8;
         if (f < 1.0) score += 4;
       }
@@ -207,7 +188,7 @@ class PitchService {
       }
     }
 
-    // Pliem doar dacă îmbunătățește clar față de x1.
+    // Pliem doar dacă îmbunătățește față de x1.
     if (bestFactor != 1.0 && nearestAbs(freq * bestFactor) + 25 < absAt1) {
       return freq * bestFactor;
     }

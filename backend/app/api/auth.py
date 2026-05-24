@@ -1,0 +1,257 @@
+"""Rute de autentificare: înregistrare, login, profil, resetare parolă.
+
+Email + parolă, token JWT. Stocare în SQLite (vezi auth_db).
+"""
+
+import logging
+import re
+import secrets
+import smtplib
+from datetime import datetime, timedelta, timezone
+from email.mime.text import MIMEText
+
+import dns.exception
+import dns.resolver
+from fastapi import APIRouter, Header, HTTPException
+from pydantic import BaseModel, Field
+
+from app import auth_db
+from app.auth_security import (
+    create_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+# Domenii temporare (temp-mail) — respinse chiar dacă trec DNS.
+_DISPOSABLE_DOMAINS: frozenset[str] = frozenset({
+    "mailinator.com", "guerrillamail.com", "10minutemail.com",
+    "tempmail.com", "temp-mail.org", "throwawaymail.com", "yopmail.com",
+    "trashmail.com", "getnada.com", "sharklasers.com", "maildrop.cc",
+    "fakemail.net", "dispostable.com", "mailnesia.com", "mintemail.com",
+    "spam4.me", "tempr.email", "moakt.com", "emailondeck.com",
+})
+
+
+def _check_email_domain(email: str) -> tuple[bool, str | None]:
+    """Verifică MX/A DNS al domeniului — strict: ORICE eșec = respingere.
+
+    Acceptăm DOAR dacă domeniul are explicit MX (sau A ca fallback RFC 5321).
+    Timeout, NoNameservers, syntax error → respingem (mai bine un fals
+    negativ ocazional decât un cont pe un domeniu inexistent).
+    """
+    domain = email.rsplit("@", 1)[-1]
+    if domain in _DISPOSABLE_DOMAINS:
+        return False, "Adresele de email temporare nu sunt acceptate."
+    try:
+        answers = dns.resolver.resolve(domain, "MX", lifetime=4.0)
+        if len(answers) > 0:
+            return True, None
+        return False, "Domeniul adresei de email nu poate primi mesaje."
+    except dns.resolver.NXDOMAIN:
+        return False, "Domeniul adresei de email nu există."
+    except dns.resolver.NoAnswer:
+        # Domeniu fără MX → fallback pe A (RFC 5321).
+        try:
+            dns.resolver.resolve(domain, "A", lifetime=4.0)
+            return True, None
+        except dns.exception.DNSException:
+            return False, "Domeniul adresei de email nu poate primi mesaje."
+    except dns.exception.DNSException as exc:
+        # Timeout / NoNameservers / SyntaxError → NU putem confirma că
+        # domeniul există → respingem. Bug-ul anterior (btt.ch timeout →
+        # acceptat) e închis aici.
+        logger.warning(
+            "🔶 [auth] DNS pentru '%s' a eșuat (%s) — înregistrare respinsă",
+            domain,
+            exc.__class__.__name__,
+        )
+        return False, "Nu am putut verifica domeniul emailului. Folosește o adresă reală și încearcă din nou."
+
+
+# ─── Modele cerere / răspuns ────────────────────────────────────────
+class RegisterRequest(BaseModel):
+    email: str
+    password: str = Field(..., min_length=6)
+    display_name: str | None = Field(None, alias="displayName")
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ResetRequest(BaseModel):
+    email: str
+
+
+class ResetConfirmRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str = Field(..., min_length=6)
+
+
+class UserPublic(BaseModel):
+    id: int
+    email: str
+    displayName: str | None
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserPublic
+
+
+def _public(row: dict) -> UserPublic:
+    return UserPublic(
+        id=row["id"], email=row["email"], displayName=row["display_name"]
+    )
+
+
+def _require_user(authorization: str | None) -> dict:
+    """Validează header-ul Bearer și întoarce utilizatorul."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token de autentificare lipsă")
+    user_id = decode_token(authorization[7:])
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Sesiune invalidă sau expirată")
+    row = auth_db.get_user_by_id(user_id)
+    if row is None:
+        raise HTTPException(status_code=401, detail="Cont inexistent")
+    return row
+
+
+# ─── Endpoint-uri ───────────────────────────────────────────────────
+@router.post("/register", response_model=AuthResponse)
+def register(req: RegisterRequest) -> AuthResponse:
+    email = req.email.strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Adresă de email invalidă")
+    if auth_db.get_user_by_email(email) is not None:
+        raise HTTPException(
+            status_code=409, detail="Există deja un cont cu acest email"
+        )
+    # Verificăm că domeniul de email chiar poate primi mesaje (DNS/MX).
+    domain_ok, domain_err = _check_email_domain(email)
+    if not domain_ok:
+        logger.info("🔐 [auth] Înregistrare respinsă (domeniu invalid): %s", email)
+        raise HTTPException(status_code=400, detail=domain_err)
+    user_id = auth_db.create_user(
+        email, hash_password(req.password), req.display_name
+    )
+    row = auth_db.get_user_by_id(user_id)
+    assert row is not None
+    logger.info("🔐 [auth] Cont nou creat: %s", email)
+    return AuthResponse(token=create_token(user_id), user=_public(row))
+
+
+@router.post("/login", response_model=AuthResponse)
+def login(req: LoginRequest) -> AuthResponse:
+    email = req.email.strip().lower()
+    row = auth_db.get_user_by_email(email)
+    if row is None or not verify_password(req.password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Email sau parolă greșite")
+    logger.info("🔐 [auth] Autentificare: %s", email)
+    return AuthResponse(token=create_token(row["id"]), user=_public(row))
+
+
+@router.get("/me", response_model=UserPublic)
+def me(authorization: str | None = Header(default=None)) -> UserPublic:
+    """Profilul utilizatorului curent — pentru validarea sesiunii salvate."""
+    return _public(_require_user(authorization))
+
+
+class UpdateProfileRequest(BaseModel):
+    display_name: str | None = Field(None, alias="displayName", max_length=80)
+
+
+@router.put("/me", response_model=UserPublic)
+def update_me(
+    req: UpdateProfileRequest,
+    authorization: str | None = Header(default=None),
+) -> UserPublic:
+    """Modifică profilul (deocamdată doar `displayName`)."""
+    row = _require_user(authorization)
+    name = (req.display_name or "").strip() or None
+    auth_db.update_display_name(row["id"], name)
+    updated = auth_db.get_user_by_id(row["id"])
+    assert updated is not None
+    logger.info("🔐 [auth] Profil actualizat user_id=%d", row["id"])
+    return _public(updated)
+
+
+# ─── Resetare parolă cu OTP ────────────────────────────────────────
+# Token-uri stocate în memorie: {email: (code, expires_at)}
+# Nu necesită modificări de schemă DB. La restart server token-urile
+# expirate sunt pierdute (utilizatorul trebuie să ceară unul nou).
+_reset_tokens: dict[str, tuple[str, datetime]] = {}
+_OTP_VALID_MINUTES = 15
+
+
+def _send_reset_email(to_email: str, code: str) -> None:
+    """Trimite codul OTP prin Gmail SMTP cu SSL."""
+    from app.config import settings  # import local evită circular import la startup
+
+    msg = MIMEText(
+        f"Codul tău de resetare parolă GTune AI este:\n\n"
+        f"  {code}\n\n"
+        f"Codul este valabil {_OTP_VALID_MINUTES} minute.\n"
+        f"Dacă nu ai cerut resetarea parolei, ignoră acest mesaj.",
+        "plain",
+        "utf-8",
+    )
+    msg["Subject"] = f"GTune AI — Cod resetare parolă: {code}"
+    msg["From"] = settings.GMAIL_USER
+    msg["To"] = to_email
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        smtp.login(settings.GMAIL_USER, settings.GMAIL_APP_PASSWORD)
+        smtp.send_message(msg)
+
+
+@router.post("/reset-password")
+def reset_password(req: ResetRequest) -> dict[str, str]:
+    """Pasul 1: generează OTP și îl trimite pe email.
+
+    Răspuns mereu generic — nu dezvăluim dacă adresa există în baza de date.
+    """
+    email = req.email.strip().lower()
+    row = auth_db.get_user_by_email(email)
+    if row is not None:
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        _reset_tokens[email] = (
+            code,
+            datetime.now(timezone.utc) + timedelta(minutes=_OTP_VALID_MINUTES),
+        )
+        try:
+            _send_reset_email(email, code)
+        except Exception as exc:
+            logger.error("🔐 [auth] Eroare trimitere email reset: %s", exc)
+    logger.info("🔐 [auth] Resetare parolă cerută pentru: %s", email)
+    return {
+        "message": "Dacă există un cont cu această adresă, "
+        "vei primi un cod de resetare pe email.",
+    }
+
+
+@router.post("/reset-confirm")
+def reset_confirm(req: ResetConfirmRequest) -> dict[str, str]:
+    """Pasul 2: validează codul OTP și actualizează parola."""
+    email = req.email.strip().lower()
+    entry = _reset_tokens.get(email)
+    if (
+        entry is None
+        or datetime.now(timezone.utc) > entry[1]
+        or entry[0] != req.code.strip()
+    ):
+        raise HTTPException(status_code=400, detail="Cod invalid sau expirat.")
+    auth_db.update_password_hash(email, hash_password(req.new_password))
+    del _reset_tokens[email]
+    logger.info("🔐 [auth] Parolă resetată pentru: %s", email)
+    return {"message": "Parola a fost resetată cu succes."}

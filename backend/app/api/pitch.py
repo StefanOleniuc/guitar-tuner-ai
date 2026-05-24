@@ -7,8 +7,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/pitch", tags=["pitch"])
 
-# Limită prudentă: 1.5 s @ 16 kHz PCM16 = ~48 KB. 200 KB lasă o margine
-# generoasă fără să permită upload-uri abuzive.
+# 200 KB >> 1.5s@16kHz PCM16 (~48KB) — margine generoasă anti-abuz.
 MAX_UPLOAD_BYTES: int = 200 * 1024
 
 
@@ -25,11 +24,7 @@ async def detect_pitch(
     request: Request,
     audio: UploadFile = File(..., description="Audio PCM16 mono raw (recomandat 16 kHz, ~1.5 s)"),
 ) -> PitchDetectionResponse:
-    """Estimare AI a frecvenței fundamentale dintr-un sample PCM16.
-
-    Verificare punctuală (NU real-time): clientul mobil capturează ~1.5 s
-    de audio și îl trimite aici pentru o măsurătoare de precizie.
-    """
+    """Estimare AI a frecvenței fundamentale dintr-un sample PCM16 (~1.5s)."""
     logger.info("[pitch] Cerere /detect primită (content_type=%s)", audio.content_type)
 
     raw = await audio.read()

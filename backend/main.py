@@ -4,8 +4,11 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
+from app import auth_db
+from app.api.auth import router as auth_router
 from app.api.health import router as health_router
 from app.api.pitch import router as pitch_router
+from app.api.user import router as user_router
 from app.config import settings
 from app.core.logging_config import setup_logging
 from app.services.crepe_service import CrepeService
@@ -16,14 +19,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Inițializează resursele scumpe la pornire (modelul CREPE) și le
-    expune prin app.state. Modelul rămâne în memorie pe toată durata
-    procesului — fără reload per cerere.
-    """
+    """Inițializare la startup: DB conturi + model CREPE în app.state."""
+    logger.info("[main] Inițializare bază de date conturi...")
+    auth_db.init_db()
     logger.info("[main] Inițializare CrepeService...")
     app.state.crepe_service = CrepeService()
     logger.info(
-        "[main] 🎸 Guitar Tuner AI Backend pornit — ENV=%s, AI ready",
+        "[main] 🎸 Guitar Tuner AI Backend pornit — ENV=%s, AI + Auth ready",
         settings.ENV,
     )
     yield
@@ -38,6 +40,8 @@ app = FastAPI(
 
 app.include_router(health_router, prefix="/api")
 app.include_router(pitch_router)
+app.include_router(auth_router)
+app.include_router(user_router)
 
 
 @app.get("/")

@@ -1,19 +1,14 @@
 import logging
 import time
 
-import crepe
-import numpy as np
+import crepe 
+import numpy as np  
 
 logger = logging.getLogger(__name__)
 
 
 class CrepeService:
-    """Wrapper peste modelul CREPE de pitch detection.
-
-    Modelul (capacity='medium') se încarcă o singură dată la pornirea
-    aplicației și este reutilizat la fiecare cerere. Detecția se face
-    pe semnale PCM16 mono — convertite intern în float32 normalizat.
-    """
+    """Wrapper CREPE: PCM16 → frecvență + confidence. Model 'medium', încărcat la startup."""
 
     MODEL_CAPACITY: str = "medium"
     DEFAULT_SAMPLE_RATE: int = 16000
@@ -22,8 +17,7 @@ class CrepeService:
     def __init__(self) -> None:
         logger.info("[crepe_service] Încărcare model CREPE (%s)...", self.MODEL_CAPACITY)
         t0 = time.perf_counter()
-        # Forțăm încărcarea în memorie a graph-ului CNN (la primul apel
-        # crepe.predict ar fi lazy-loaded; preferăm aici la startup)
+        # Forțăm lazy-loading la startup (nu la primul request).
         crepe.core.build_and_load_model(self.MODEL_CAPACITY)
         elapsed = time.perf_counter() - t0
         logger.info("🚀 [crepe_service] Model loaded in %.2fs", elapsed)
@@ -33,11 +27,10 @@ class CrepeService:
         pcm16_bytes: bytes,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
     ) -> dict[str, float | int]:
-        """Estimează frecvența fundamentală dintr-un buffer PCM16 mono.
+        """Estimează frecvența dintr-un buffer PCM16 mono.
 
-        Returnează un dict cu cea mai sigură frecvență detectată din
-        secvență (CREPE produce o predicție la fiecare 10 ms; alegem
-        cadrul cu cea mai mare încredere).
+        Returnează frecvența cadrului cu cea mai mare încredere (CREPE produce
+        o predicție la fiecare 10ms; alegem argmax(confidence)).
         """
         try:
             audio_int16 = np.frombuffer(pcm16_bytes, dtype=np.int16)
@@ -50,10 +43,7 @@ class CrepeService:
             # PCM16 signed [-32768, 32767] → float32 [-1.0, 1.0]
             audio = audio_int16.astype(np.float32) / 32768.0
 
-            # viterbi=False: alegem oricum frame-ul cu confidence maxim
-            # din secvență (nu ne interesează traiectoria netedă inter-frame),
-            # iar fără HMM viterbi inferența e ~2x mai rapidă — critic
-            # pentru modul AI Precision continuu (request la fiecare ~1.2s).
+            # viterbi=False: argmax pe confidence e suficient și ~2x mai rapid.
             _time, frequency, confidence, _activation = crepe.predict(
                 audio,
                 sr=sample_rate,
@@ -62,7 +52,7 @@ class CrepeService:
                 verbose=0,
             )
 
-            # Cadrul cu cea mai mare încredere → frecvența reprezentativă
+            # Cadrul cu cea mai mare încredere → frecvența reprezentativă.
             best_idx = int(np.argmax(confidence))
             best_freq = float(frequency[best_idx])
             best_conf = float(confidence[best_idx])

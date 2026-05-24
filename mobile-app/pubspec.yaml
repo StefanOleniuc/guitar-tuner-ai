@@ -39,6 +39,7 @@ dependencies:
   record: ^6.0.0
   pitch_detector_dart: ^0.0.7
   shared_preferences: ^2.3.0
+  audioplayers: ^6.1.0
 
 dev_dependencies:
   flutter_test:
@@ -54,23 +55,27 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
-# Iconița aplicației. Imaginea e deja un icon complet (pătrat rotunjit),
-# deci o folosim full-bleed (fără adaptive zoom care o micșora).
+# Iconița aplicației. Pe Android 8+ folosim adaptive icon cu logo-ul ca
+# `background` (full-bleed 108dp) și `foreground` complet transparent —
+# așa launcher-ul îl maschează direct la formă (cerc/squircle) FĂRĂ ca
+# sistemul să mai adauge halou alb peste icoana legacy.
 # Rulează:  dart run flutter_launcher_icons
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/images/GTune_logo_app.png"
+  image_path: "assets/images/GTune_logo_updated.png"
+  adaptive_icon_background: "assets/images/GTune_logo_updated.png"
+  adaptive_icon_foreground: "assets/images/adaptive_icon_transparent.png"
   remove_alpha_ios: true
 
 # Splash nativ: fundal negru profund + logo centrat, pe toate versiunile
 # Android. Rulează:  dart run flutter_native_splash:create
 flutter_native_splash:
   color: "#000000"
-  image: "assets/images/GTune_logo_app.png"
+  image: "assets/images/GTune_logo_updated.png"
   android_12:
     color: "#000000"
-    image: "assets/images/GTune_logo_app.png"
+    image: "assets/images/GTune_logo_updated.png"
     icon_background_color: "#000000"
 
 # For information on the generic Dart part of this file, see the

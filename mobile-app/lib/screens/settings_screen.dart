@@ -5,17 +5,21 @@ import 'package:flutter/services.dart';
 
 import '../models/instrument.dart';
 import '../services/app_settings.dart';
+import '../services/auth_service.dart';
 import '../utils/app_logger.dart';
+import '../services/user_data_service.dart';
 import '../widgets/app_background.dart';
+import '../widgets/fade_scroll_edges.dart';
+import '../widgets/top_header_fade.dart';
+import 'auth_screen.dart';
+import 'tuning_history_screen.dart';
 
-// Paletă — aceeași ca în tuner_screen, ținută local ca să nu cuplăm
-// ecranele între ele.
+// Paletă locală — nu cuplăm ecranele între ele.
 const Color _bg = Color(0xFF0D0D0D);
 const Color _green = Color(0xFF00E676);
 const Color _track = Color(0xFF2A2A2A);
 
-/// Ecranul de Setări: alegerea instrumentului + calibrarea A4.
-/// Restul (cont, limbă, notificări) vine în iterații ulterioare.
+/// Ecranul de Setări: instrument, calibrare A4, afișaj, cont.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
@@ -36,31 +40,30 @@ class SettingsScreen extends StatelessWidget {
         children: const [
           AppBackground(),
           _SettingsList(),
+          // Estompare premium peste partea de sus → conținutul se topește
+          // sub textul „Setări" cât scrolezi, fără să se taie brusc.
+          TopHeaderFade(color: _bg),
         ],
       ),
     );
   }
 }
 
-/// Lista de setări — extrasă ca widget `const` separat ca să nu cuplăm
-/// `const`-ul ei de Stack-ul părinte.
+/// Lista de setări — widget `const` separat.
 class _SettingsList extends StatelessWidget {
   const _SettingsList();
 
   @override
   Widget build(BuildContext context) {
-    // Fiecare widget reactiv își are propriul AnimatedBuilder pe
-    // AppSettings → pot rămâne `const` și totuși se reconstruiesc la
-    // fiecare notificare.
-    return ListView(
-      // Top: status bar + AppBar transparent (body e extins în spate).
-      padding: EdgeInsets.fromLTRB(
-        18,
-        MediaQuery.of(context).padding.top + kToolbarHeight + 8,
-        18,
-        32,
-      ),
+    final topInset = MediaQuery.of(context).padding.top + kToolbarHeight + 8;
+    // Fiecare widget reactiv are AnimatedBuilder propriu pe AppSettings.
+    final list = ListView(
+      padding: EdgeInsets.fromLTRB(18, topInset, 18, 40),
       children: const [
+        _SectionLabel(icon: Icons.person_outline, text: 'Cont'),
+        SizedBox(height: 10),
+        _AccountCard(),
+        SizedBox(height: 28),
         _SectionLabel(icon: Icons.piano, text: 'Instrument'),
         SizedBox(height: 10),
         _InstrumentPicker(),
@@ -76,6 +79,8 @@ class _SettingsList extends StatelessWidget {
         _AboutFooter(),
       ],
     );
+    // Fade gradient la marginile listei.
+    return FadeScrollEdges(child: list);
   }
 }
 
@@ -138,13 +143,12 @@ class _InstrumentPicker extends StatelessWidget {
     );
   }
 
-  /// Selectează instrumentul și revine pe ecranul tunerului — utilizatorul
-  /// vede instant noul instrument acordat.
+  /// Selectează instrumentul și revine la tuner.
   void _selectAndReturn(BuildContext context, Instrument inst) {
     HapticFeedback.selectionClick();
     AppSettings.instance.setInstrument(inst.id);
     AppLogger.i('⚙️ [Settings] Instrument selectat: ${inst.name}');
-    // Mic delay ca să se vadă animația de selecție, apoi înapoi la tuner.
+    // Mic delay pentru animația de selecție, apoi înapoi.
     Future.delayed(const Duration(milliseconds: 260), () {
       if (context.mounted) Navigator.of(context).maybePop();
     });
@@ -217,7 +221,7 @@ class _InstrumentTile extends StatelessWidget {
                 ],
               ),
             ),
-            // Bulina radio animată
+            // Buton radio animat
             AnimatedContainer(
               duration: const Duration(milliseconds: 170),
               width: 22,
@@ -225,10 +229,7 @@ class _InstrumentTile extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: selected ? _green : Colors.transparent,
-                border: Border.all(
-                  color: selected ? _green : _track,
-                  width: 2,
-                ),
+                border: Border.all(color: selected ? _green : _track, width: 2),
               ),
               child: selected
                   ? const Icon(Icons.check, size: 14, color: Colors.black)
@@ -283,14 +284,16 @@ class _A4CalibrationCard extends StatelessWidget {
                     enabled: a4 > AppSettings.minA4,
                     onStep: () => _nudge(-1),
                   ),
-                  // Numărul mare — animă la fiecare schimbare
+                  // Numărul mare animat
                   Expanded(
                     child: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 200),
                       transitionBuilder: (child, anim) => ScaleTransition(
                         scale: Tween<double>(begin: 0.65, end: 1.0).animate(
                           CurvedAnimation(
-                              parent: anim, curve: Curves.easeOutBack),
+                            parent: anim,
+                            curve: Curves.easeOutBack,
+                          ),
                         ),
                         child: FadeTransition(opacity: anim, child: child),
                       ),
@@ -384,51 +387,98 @@ class _DisplayCard extends StatelessWidget {
     return AnimatedBuilder(
       animation: AppSettings.instance,
       builder: (context, _) {
-        final on = AppSettings.instance.showFrequency;
         return Container(
-          padding: const EdgeInsets.fromLTRB(16, 6, 10, 6),
+          padding: const EdgeInsets.fromLTRB(16, 4, 10, 4),
           decoration: BoxDecoration(
             color: Colors.white.withAlpha(10),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: _track),
           ),
-          child: Row(
+          child: Column(
             children: [
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Afișează frecvența',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      'Valoarea în Hz sub notă, pe tuner',
-                      style: TextStyle(color: Colors.white38, fontSize: 11.5),
-                    ),
-                  ],
-                ),
+              _SettingsRow(
+                title: 'Afișează frecvența',
+                subtitle: 'Valoarea în Hz sub notă, pe tuner',
+                value: AppSettings.instance.showFrequency,
+                onChanged: AppSettings.instance.setShowFrequency,
               ),
-              Switch(
-                value: on,
-                activeThumbColor: Colors.black,
-                activeTrackColor: _green,
-                inactiveThumbColor: Colors.white70,
-                inactiveTrackColor: _track,
-                onChanged: (v) {
-                  HapticFeedback.selectionClick();
-                  AppSettings.instance.setShowFrequency(v);
-                },
+              const Divider(height: 1, color: _track, indent: 2, endIndent: 2),
+              _SettingsRow(
+                title: 'Mod stângaci',
+                subtitle: 'Oglindește ordinea corzilor (joasă în dreapta)',
+                value: AppSettings.instance.leftHanded,
+                onChanged: AppSettings.instance.setLeftHanded,
+              ),
+              const Divider(height: 1, color: _track, indent: 2, endIndent: 2),
+              _SettingsRow(
+                title: 'Mod cromatic',
+                subtitle: 'Detectează orice notă (84 multi-octavă), nu doar corzile',
+                value: AppSettings.instance.chromaticMode,
+                onChanged: AppSettings.instance.setChromaticMode,
               ),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+class _SettingsRow extends StatelessWidget {
+  const _SettingsRow({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool value;
+  final Future<void> Function(bool) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 11.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: value,
+            activeThumbColor: Colors.black,
+            activeTrackColor: _green,
+            inactiveThumbColor: Colors.white70,
+            inactiveTrackColor: _track,
+            onChanged: (v) {
+              HapticFeedback.selectionClick();
+              onChanged(v);
+            },
+          ),
+        ],
+      ),
     );
   }
 }
@@ -503,20 +553,221 @@ class _StepButtonState extends State<_StepButton> {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: _pressed ? _green.withAlpha(55) : const Color(0xFF1F1F1F),
-            border: Border.all(
-              color: _pressed ? _green : _track,
-              width: 1.6,
-            ),
+            border: Border.all(color: _pressed ? _green : _track, width: 1.6),
           ),
           child: Icon(
             widget.icon,
             size: 28,
-            color: !on
-                ? Colors.white12
-                : (_pressed ? _green : Colors.white70),
+            color: !on ? Colors.white12 : (_pressed ? _green : Colors.white70),
           ),
         ),
       ),
+    );
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Cardul de cont — login / profil / delogare
+// ───────────────────────────────────────────────────────────────────
+class _AccountCard extends StatelessWidget {
+  const _AccountCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: AuthService.instance,
+      builder: (context, _) {
+        final user = AuthService.instance.user;
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white.withAlpha(10),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _track),
+          ),
+          child: user == null
+              ? _signedOut(context)
+              : _signedIn(context, user.label, user.email, user.initial),
+        );
+      },
+    );
+  }
+
+  Widget _signedOut(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: _track,
+              ),
+              child: const Icon(
+                Icons.person_outline,
+                color: Colors.white54,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 13),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Nu ești conectat',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Creează un cont ca să-ți salvezi progresul',
+                    style: TextStyle(color: Colors.white38, fontSize: 11.5),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute<void>(builder: (_) => const AuthScreen())),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _green,
+              foregroundColor: Colors.black,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(13),
+              ),
+            ),
+            child: const Text(
+              'Creează cont sau conectează-te',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _signedIn(
+    BuildContext context,
+    String name,
+    String email,
+    String initial,
+  ) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _green.withAlpha(40),
+                border: Border.all(color: _green.withAlpha(120)),
+              ),
+              child: Text(
+                initial,
+                style: const TextStyle(
+                  color: _green,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 20,
+                ),
+              ),
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    email,
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Istoric acordaje — total „live" din `UserDataService`.
+        AnimatedBuilder(
+          animation: UserDataService.instance,
+          builder: (context, _) {
+            final total = UserDataService.instance.historyTotal;
+            return SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const TuningHistoryScreen(),
+                  ),
+                ),
+                icon: const Icon(Icons.history_rounded, size: 18),
+                label: Text(
+                  total == 0 ? 'Istoric acordaje' : 'Istoric acordaje ($total)',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13.5,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _green.withAlpha(28),
+                  foregroundColor: _green,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: () => confirmAndLogout(context),
+            icon: const Icon(Icons.logout, size: 17),
+            label: const Text('Deconectează-te'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white60,
+              side: const BorderSide(color: _track),
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(13),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

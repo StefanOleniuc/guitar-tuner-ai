@@ -65,9 +65,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Pre-flight: import a critical package to make sure install really worked.
-# (multipart catches the FastAPI Form/UploadFile dependency; crepe catches
-# the AI pipeline. Both must be present before we boot uvicorn.)
-python -c "import multipart, crepe, tensorflow, numpy" 2>$null
+# (multipart = FastAPI uploads; crepe = AI pipeline; bcrypt + jwt = auth;
+#  dns = email domain validation.)
+python -c "import multipart, crepe, tensorflow, numpy, bcrypt, jwt, dns.resolver" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Write-Host "[ERROR] Critical package import failed. Run manually:" -ForegroundColor Red

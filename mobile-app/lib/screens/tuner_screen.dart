@@ -10,14 +10,19 @@ import '../models/tuning.dart';
 import '../services/api_service.dart';
 import '../services/app_settings.dart';
 import '../services/audio_service.dart';
+import '../services/auth_service.dart';
+import '../services/active_page.dart';
+import '../services/note_audio.dart';
 import '../services/pitch_service.dart';
+import '../services/user_data_service.dart';
 import '../utils/app_logger.dart';
 import '../utils/one_euro_filter.dart';
-import '../widgets/app_background.dart';
-import '../widgets/app_logo_banner.dart';
+import '../widgets/app_dialog.dart';
+import '../widgets/brand_app_bar.dart';
+import '../widgets/persistent_feature_bar.dart';
+import 'auth_screen.dart';
 import 'settings_screen.dart';
 
-const Color _bg = Color(0xFF0D0D0D);
 const Color _green = Color(0xFF00E676);
 const Color _orange = Color(0xFFFF9800);
 const Color _red = Color(0xFFF44336);
@@ -27,9 +32,12 @@ const Color _track = Color(0xFF2A2A2A);
 const Color _aiPurple = Color(0xFF9C27B0);
 const Color _aiCardBg = Color(0xFF1A0E2E);
 
-// Cât de „lipicios" e indicatorul: fracția cu care se apropie de țintă
-// la fiecare cadru (~60fps). Mai mic = mai lin dar mai lent.
-const double _easing = 0.18;
+// Cât de „lipicios" e indicatorul: fracția cu care se apropie de țintă la
+// fiecare cadru (~60fps). Mai mare = mai responsiv (acul prinde mai repede
+// mișcarea cheiței), mai jos = mai smooth dar perceptibil ca lag. 0.40
+// e ales ca să rămână smooth fără jitter, dar să răspundă rapid (~3 cadre
+// pentru ~85% din distanță = ~50ms vs ~80ms la 0.26).
+const double _easing = 0.40;
 
 // Resetare automată a sesiunii dacă nu se cântă nimic atâta timp.
 const Duration _inactivityReset = Duration(seconds: 12);
@@ -49,65 +57,114 @@ class _TunerScreenState extends State<TunerScreen>
 
   // Inițializat în initState din instrumentul curent (AppSettings).
   late Tuning _tuning;
-  // null = mod Auto (detectează coarda automat); altfel doar coarda fixată
+  // null = mod Auto; altfel coarda fixată manual.
   String? _lockedString;
   bool _listening = false;
   bool _permissionDenied = false;
+  // false cât verificăm permisiunea la pornire.
+  bool _permissionChecked = false;
   String _note = '';
   double _freq = 0;
   bool _hasSignal = false;
 
-  // Valoarea măsurată (țintă) vs. valoarea afișată (interpolată lin)
+  // Valoarea măsurată (țintă) vs. valoarea afișată (interpolată lin).
   double _targetCents = 0;
   double _displayCents = 0;
   Color _displayColor = _grey;
-  // Oscilator de respirație 0..1 (sinus) — animă placeholder-ul idle
-  // și indicatorul AI; recalculat la fiecare cadru în _onFrame.
+  // Oscilator de respirație 0..1 — animă placeholder-ul idle și strip-ul AI.
   double _breath = 0;
-  // Ultima dată când un cadru YIN a fost ACCEPTAT (a trecut de gating).
-  // Dacă AI Precision e ON și asta e vechi → CREPE „cară" singur acul.
-  DateTime? _lastYinAcceptedTime;
 
   // Sesiune: corzile acordate rămân verzi până la reset
   final Set<String> _tunedStrings = {};
   bool _allTuned = false;
+  // Mod cromatic: citit din AppSettings (toggle în Setări → Acordor).
+  // Când e on, detectăm ORICE notă din lista 84-multi-octavă în loc de
+  // doar corzile acordajului ales. UI-ul tuner-ului ascunde string-row +
+  // tuning-selector.
+  bool get _chromaticMode => AppSettings.instance.chromaticMode;
+
+  // Lista cromatică pre-calculată: C1 .. B7 = 84 note. Costul nearestNote
+  // pe lista asta e neglijabil (84 freq compares, < 0.1ms).
+  static final List<String> _chromaticNotes = () {
+    const names = [
+      'C',
+      'C#',
+      'D',
+      'D#',
+      'E',
+      'F',
+      'F#',
+      'G',
+      'G#',
+      'A',
+      'A#',
+      'B',
+    ];
+    final out = <String>[];
+    for (int oct = 1; oct <= 7; oct++) {
+      for (final n in names) {
+        out.add('$n$oct');
+      }
+    }
+    return List<String>.unmodifiable(out);
+  }();
+  // Timpul când userul a acordat prima coardă din sesiunea curentă —
+  // folosit ca să calculăm durata sesiunii când se completează (istoric).
+  DateTime? _sessionStartedAt;
+  // Evităm dublarea înregistrării când `_allTuned` rămâne `true` pe
+  // mai multe cadre. Resetat la `_resetSession` / `_clearDetection`.
+  bool _sessionRecorded = false;
 
   final List<double> _recentFreqs = [];
   // Filtru adaptiv pe frecvență — elimină jitter-ul când e stabil
   final OneEuroFilter _euro = OneEuroFilter();
-  // Histerezis „acordat" ca să nu pâlpâie verde/portocaliu la limită
+  // Histerezis „acordat": intră la 5¢, iese la 9¢ — evită pâlpâitul.
   bool _inTuneHyst = false;
-  // Confirmare susținută: marcăm coarda doar dacă stă stabil sub 5¢
-  // pe aceeași notă atâtea cadre la rând (~0.5s la ~80ms/cadru).
+  // Confirmare susținută: 6 cadre YIN sub 5¢ = coardă acordată (~0.5s).
+  // Când CREPE conduce (`_aiDriving`), cadrele vin mai rar (~1.2-1.7s pe
+  // request); cerem doar 2 → ~2-3s, altfel n-am marca niciodată verde
+  // într-un mediu zgomotos.
   static const int _kInTuneFramesNeeded = 6;
+  static const int _kInTuneFramesNeededAi = 2;
   String? _tuneCandidate;
   int _inTuneStreak = 0;
   // Salt mare neconfirmat — îl reținem ca să cerem confirmare pe 2 cadre
   double? _pendingFreq;
   StreamSubscription<Uint8List>? _audioSubscription;
 
-  // ─── AI Precision (CREPE) — mod CONTINUU ───────────────────────────
-  //
-  // Pe baza fluxului audio comun cu YIN, acumulăm ferestre de _kAiWindow
-  // ms și le trimitem la backend. CREPE oferă un „hint" de frecvență cu
-  // confidence — folosit ca:
-  //   1) referință de octavă pentru folding-ul YIN (kill E2↔E4)
-  //   2) anchor de stabilitate când YIN bate jitter în zgomot
-  //   3) feedback vizual (badge AI pulsează la fiecare update bun)
+  // ─── AI Precision (CREPE) ─────────────────────────────────────────
+  // CREPE rulează pe server (round-trip ~1s) — NU conduce acul în timp
+  // real. YIN e master; CREPE = readout separat + fallback când YIN e mut.
   bool _aiPrecisionEnabled = false;
   final BytesBuilder _aiWindowBuffer = BytesBuilder(copy: false);
   bool _aiRequestInFlight = false;
   double? _aiFreqHint;
   DateTime? _aiHintTime;
   double _aiConfidence = 0;
-  // Fereastra trimisă la backend: 1.2s @ 16kHz mono PCM16
-  // = 1200 * 16000 * 2 / 1000 = 38400 bytes per request
+  String _aiNote = '';
+  double _aiCents = 0;
+  // Eșecuri consecutive de rețea — după _kAiMaxFails oprim AI Precision.
+  int _aiFailCount = 0;
+  static const int _kAiMaxFails = 3;
+  // _aiDriving = CREPE conduce acul (YIN mut). Revenire cu hysteresis.
+  bool _aiDriving = false;
+  DateTime? _lastYinDisplay;
+  int _yinRecoveryCount = 0;
+  static const Duration _kYinMuteForAi = Duration(milliseconds: 700);
+  static const int _kYinRecoveryFrames = 4;
+  // Fereastra trimisă la backend: 0.8s @ 16kHz mono PCM16 = 25600 bytes.
+  // Scurtată de la 1.2s ca să simțim CREPE mai puțin „rar" în UI (request
+  // mai dese). CREPE rămâne robust pe 800ms (80 predicții la 10ms).
   static const int _kAiSampleRate = 16000;
-  static const int _kAiWindowMs = 1200;
+  static const int _kAiWindowMs = 800;
   static const int _kAiWindowBytes = _kAiWindowMs * _kAiSampleRate * 2 ~/ 1000;
-  // Cât rămâne „proaspăt" un hint AI. Ciclul CREPE real e ~2-2.5s
-  // (1.2s fereastră + ~1.1s inferență), deci 3.5s acoperă confortabil.
+  // Cât rămâne „proaspăt" un hint AI pentru afișaj.
   static const Duration _kAiHintFreshness = Duration(milliseconds: 3500);
+  // Prag RMS sub care considerăm fereastra audio „liniște" — sub el NU
+  // trimitem nimic la CREPE. Evită ca AI să sugereze frecvențe absurde
+  // din zgomotul de fond (de ex. la E4 vs YIN diferență mare în liniște).
+  // Valoarea e raportată la maxul int16 (32768). 0.012 ≈ -38dBFS.
+  static const double _kAiMinRms = 0.012;
   // Praguri pentru filtrul anti-spike: CREPE poate da false-positives
   static const double _kAiMinConfidence = 0.45;
   static const double _kAiMaxClampedCents = 49.5;
@@ -122,30 +179,87 @@ class _TunerScreenState extends State<TunerScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Bara persistentă pornește deja ascunsă (`ActivePage.barAllowed`
+    // default `false`); o pornim când confirmăm permisiunea în `_bootstrap`.
     // Instrument + calibrare A4 din preferințe (deja încărcate în main)
     _tuning = AppSettings.instance.instrument.tunings.first;
     _pitchService.a4 = AppSettings.instance.a4;
     AppSettings.instance.addListener(_onSettingsChanged);
-    // 2.4s/ciclu — oscilatorul de respirație pentru placeholder + AI.
-    // _onFrame rulează oricum la fiecare vsync (~60fps); durata afectează
-    // doar viteza lui _ticker.value (faza de sinus).
+    // Ascultăm tab-ul activ din shell — pornim/oprim microfonul cu el.
+    ActivePage.instance.addListener(_onActivePageChanged);
+    // 2.4s/ciclu — viteza oscilatorului de respirație pentru placeholder + AI.
     _ticker = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2400),
     )..addListener(_onFrame);
-    // Pornim captura automat, fără buton
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startListening());
+    // La pornire verificăm permisiunea ÎNAINTE de a porni captura.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
+  }
+
+  /// Verifică statusul permisiunii fără a deschide dialogul de sistem.
+  /// Dialogul apare abia când userul apasă butonul de pe ecranul dedicat.
+  Future<void> _bootstrap() async {
+    final granted = await _audioService.hasPermission();
+    if (!mounted) return;
+    // Pushăm welcome-auth ÎNAINTE de setState — așa userul nu vede nici
+    // măcar un frame de tuner între ecranul de permisiune și AuthScreen
+    // (ruta nouă se desenează peste tuner pe același pas de build).
+    if (granted) _maybeShowWelcomeAuth();
+    setState(() {
+      _permissionChecked = true;
+      _permissionDenied = !granted;
+    });
+    ActivePage.instance.setBarAllowed(granted);
+    if (!granted) return;
+    _startListening();
+  }
+
+  /// Afișează ecranul de autentificare opțional la prima pornire.
+  ///
+  /// Push SINCRON (fără `addPostFrameCallback`) — altfel se vede un cadru
+  /// de tuner între aprobarea microfonului și AuthScreen. Navigator.push
+  /// programează ruta nouă pentru următorul build, fără să forțeze un
+  /// frame intermediar al ecranului acoperit.
+  void _maybeShowWelcomeAuth() {
+    if (!mounted) return;
+    if (AppSettings.instance.welcomeSeen) return;
+    if (AuthService.instance.isAuthenticated) return;
+    AppSettings.instance.markWelcomeSeen();
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const AuthScreen()));
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    ActivePage.instance.removeListener(_onActivePageChanged);
     AppSettings.instance.removeListener(_onSettingsChanged);
     _inactivityTimer?.cancel();
     _ticker.dispose();
     _audioSubscription?.cancel();
     _audioService.dispose();
     super.dispose();
+  }
+
+  // ─── Vizibilitate: microfonul rulează DOAR cât tabul Acordor e vizibil ──
+  //
+  // `ActivePage` ne spune ce tab e vizibil userului. Când swipe-ăm spre
+  // Metronom sau când se deschide o rută peste shell (Setări / Auth),
+  // `visibleIndex` nu mai e `tunerIndex` → eliberăm microfonul. La revenire,
+  // pornim înapoi captura. Înlocuiește vechiul `RouteAware` (nu mai
+  // funcționează din PageView, fiindcă Tuner nu mai are propria PageRoute).
+  void _onActivePageChanged() {
+    if (!mounted) return;
+    if (!_permissionChecked || _permissionDenied) return;
+    final isVisible = ActivePage.instance.visibleIndex == ActivePage.tunerIndex;
+    if (isVisible && !_listening) {
+      AppLogger.i('🚀 [TunerScreen] Tab Acordor vizibil — pornesc microfonul');
+      _startListening();
+    } else if (!isVisible && _listening) {
+      AppLogger.i('🔶 [TunerScreen] Tab Acordor ascuns — opresc microfonul');
+      _stopListening();
+    }
   }
 
   /// Reacție la schimbări din Setări (instrument sau calibrare A4).
@@ -163,7 +277,6 @@ class _TunerScreenState extends State<TunerScreen>
         _tunedStrings.clear();
         _allTuned = false;
         _lastValidDetection = null;
-        _lastYinAcceptedTime = null;
       });
     } else {
       // Doar A4 s-a schimbat → recalculăm afișajul cu noua referință
@@ -171,27 +284,30 @@ class _TunerScreenState extends State<TunerScreen>
     }
   }
 
-  /// Deschide Setările. Oprește microfonul cât suntem pe alt ecran
-  /// (nu are sens să capturăm/trimitem la backend în fundal) și îl
-  /// repornește la întoarcere.
-  Future<void> _openSettings() async {
-    AppLogger.i('⚙️ [TunerScreen] Deschid Setări — opresc microfonul');
-    await _stopListening();
-    if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
-    );
-    if (!mounted) return;
-    if (!_permissionDenied) {
-      AppLogger.i('⚙️ [TunerScreen] Înapoi din Setări — repornesc microfonul');
-      _startListening();
-    }
+  /// Deschide Setările. Microfonul se oprește/repornește automat prin
+  /// `MainShell` — când Setările sunt pushed, shell-ul iese din prim-plan
+  /// și `ActivePage.visibleIndex` devine null → `_onActivePageChanged`
+  /// oprește captura. La închiderea Setărilor, captura repornește.
+  void _openSettings() {
+    AppLogger.i('⚙️ [TunerScreen] Deschid Setări');
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      if (!_listening && !_permissionDenied) _startListening();
+      // Repornim microfonul DOAR dacă tabul Acordor e vizibil (utilizatorul
+      // poate fi pe Metronom sau în Setări — atunci NU vrem captură).
+      final isTunerVisible =
+          ActivePage.instance.visibleIndex == ActivePage.tunerIndex;
+      if (isTunerVisible &&
+          _permissionChecked &&
+          !_permissionDenied &&
+          !_listening) {
+        _startListening();
+      }
     } else {
       // App în fundal → eliberăm microfonul
       _stopListening();
@@ -206,9 +322,8 @@ class _TunerScreenState extends State<TunerScreen>
     return _red;
   }
 
-  // Apropie lin valoarea afișată de țintă + avansează respirația.
-  // Sare rebuild-ul doar când AMBELE au convers (ac stabil + sinus în
-  // platou) — altfel animăm continuu la ~60fps.
+  // Avansează la fiecare cadru (~60fps): easing ac + respirație.
+  // Folosește AnimatedBuilder izolat — evită redesenarea întregului ecran.
   void _onFrame() {
     final target = _hasSignal ? _targetCents.clamp(-50.0, 50.0) : 0.0;
     final targetColor = _hasSignal ? _colorForCents(_targetCents) : _grey;
@@ -216,12 +331,11 @@ class _TunerScreenState extends State<TunerScreen>
     final nextCents = _displayCents + (target - _displayCents) * _easing;
     final nextColor =
         Color.lerp(_displayColor, targetColor, _easing) ?? targetColor;
-
     // Respirație: sinus 0..1 derivat din faza _ticker (perioadă 2.4s)
     final nextBreath = 0.5 + 0.5 * sin(_ticker.value * 2 * pi);
 
-    final centsConverged = (nextCents - _displayCents).abs() < 0.05 &&
-        nextColor == _displayColor;
+    final centsConverged =
+        (nextCents - _displayCents).abs() < 0.05 && nextColor == _displayColor;
     final breathStill = (nextBreath - _breath).abs() < 0.01;
     if (centsConverged && breathStill) return;
 
@@ -239,30 +353,37 @@ class _TunerScreenState extends State<TunerScreen>
     return (sorted[mid - 1] + sorted[mid]) / 2;
   }
 
-  void _onValidPitch(double frequency) {
-    // În mod manual verificăm strict coarda aleasă; altfel tot acordajul.
-    final notes = _lockedString != null ? [_lockedString!] : _tuning.notes;
-
-    // Plierea pe octave folosește o referință de continuitate ca să nu
-    // confunde E2 cu E4 când YIN dă eroarea de octavă. Prioritate:
-    //   1) hint-ul AI proaspăt (CREPE e robust la octavă) — ground truth
-    //   2) mediana valorilor YIN recente — fallback când AI e OFF/expirat
-    //   3) 0 → primul cadru, fără context
-    final double ref;
-    if (_aiHintFresh) {
-      ref = _aiFreqHint!;
-    } else if (_recentFreqs.isNotEmpty) {
-      ref = _median(_recentFreqs);
-    } else {
-      ref = 0.0;
+  /// RMS-ul ferestrei PCM16 mono, normalizat în [0, 1] (raportat la 32768).
+  /// Folosit ca să detectăm „liniștea" — dacă RMS sub `_kAiMinRms`, NU
+  /// trimitem fereastra la CREPE (ar inventa o frecvență din zgomot).
+  static double _audioRms(Uint8List pcm16) {
+    if (pcm16.length < 2) return 0;
+    final int16 = Int16List.view(
+      pcm16.buffer,
+      pcm16.offsetInBytes,
+      pcm16.lengthInBytes ~/ 2,
+    );
+    var sumSq = 0.0;
+    for (final s in int16) {
+      final v = s / 32768.0;
+      sumSq += v * v;
     }
+    return sqrt(sumSq / int16.length);
+  }
+
+  void _onValidPitch(double frequency) {
+    // În mod cromatic: detectăm orice notă (84 multi-octavă).
+    // În mod manual: doar coarda aleasă. Altfel: toate corzile acordajului.
+    final notes = _chromaticMode
+        ? _chromaticNotes
+        : (_lockedString != null ? [_lockedString!] : _tuning.notes);
+
+    final ref = _recentFreqs.isNotEmpty ? _median(_recentFreqs) : 0.0;
     final folded = _pitchService.foldToTuning(frequency, notes, ref: ref);
 
     if (ref > 0) {
       final ratio = folded / ref;
-      // Salt mare (~>1 semiton): ori e altă coardă, ori e un cadru de
-      // atac haotic. Cerem confirmare pe 2 cadre: respinge zgomotul,
-      // dar acceptă rapid schimbarea reală de coardă.
+      // Salt mare (~>1 semiton): cerem confirmare pe 2 cadre.
       if (ratio < 0.94 || ratio > 1.06) {
         final p = _pendingFreq;
         if (p != null && (folded / p - 1).abs() < 0.04) {
@@ -275,8 +396,10 @@ class _TunerScreenState extends State<TunerScreen>
           _pendingFreq = null;
         } else {
           _pendingFreq = folded; // primul cadru „ciudat" → așteptăm
-          AppLogger.d('🔍 [Tuner] outlier respins: '
-              '${folded.toStringAsFixed(1)}Hz (ref ${ref.toStringAsFixed(1)})');
+          AppLogger.d(
+            '🔍 [Tuner] outlier respins: '
+            '${folded.toStringAsFixed(1)}Hz (ref ${ref.toStringAsFixed(1)})',
+          );
           return; // NU actualizăm afișajul → fără sărituri haotice
         }
       } else {
@@ -285,36 +408,26 @@ class _TunerScreenState extends State<TunerScreen>
     }
 
     _recentFreqs.add(folded);
-    // Mediană scurtă (3) doar ca să taie outlier-ele izolate; netezirea
-    // o face filtrul One Euro (adaptiv, fără latență adăugată).
+    // Mediană scurtă (3) taie outlierele izolate; netezirea o face OneEuroFilter.
     if (_recentFreqs.length > 3) _recentFreqs.removeAt(0);
 
     // Nu afișăm pe primul cadru (deseori e atacul): așteptăm 2 valori
     if (_recentFreqs.length < 2) return;
 
     final medianFreq = _median(_recentFreqs);
-    // Filtru adaptiv: lin când coarda susținută e stabilă (gata cu
-    // balansul ±8¢ în jurul lui „acordat"), dar rapid când chiar
-    // răsucești cheia sau schimbi coarda.
+    // OneEuroFilter: lin la notă ținută stabil, rapid la schimbare de coardă.
     final smoothFreq = _euro.filter(
       medianFreq,
       DateTime.now().millisecondsSinceEpoch,
     );
     final n = _pitchService.nearestNoteInTuning(smoothFreq, notes);
-    AppLogger.d('✅ [Tuner] raw_med=${medianFreq.toStringAsFixed(1)} '
-        'smooth=${smoothFreq.toStringAsFixed(1)}Hz '
-        '→ ${n.note} ${n.cents.toStringAsFixed(0)}c');
+    AppLogger.d(
+      '✅ [Tuner] raw_med=${medianFreq.toStringAsFixed(1)} '
+      'smooth=${smoothFreq.toStringAsFixed(1)}Hz '
+      '→ ${n.note} ${n.cents.toStringAsFixed(0)}c',
+    );
 
-    // ─── AI Precision: YIN conduce, CREPE e referință tăcută ──────
-    // YIN driveuiește MEREU acul (real-time, fluid, fără sacadări).
-    // CREPE NU atinge acul cât YIN e viu — rolul lui e:
-    //   1) referință de octavă pentru folding (aplicat deja mai sus
-    //      prin `ref` → ucide confuzia E2↔E4),
-    //   2) validare la marcarea „acordat" (mai jos),
-    //   3) rescue când YIN moare complet în zgomot (vezi
-    //      _rescueMeterWithCrepe, apelat din _fireAiWindow).
     _lastValidDetection = DateTime.now();
-    _lastYinAcceptedTime = DateTime.now();
     _restartInactivityTimer();
 
     // Histerezis: intră în „acordat" sub 5¢, iese abia peste 9¢
@@ -338,22 +451,29 @@ class _TunerScreenState extends State<TunerScreen>
       _inTuneStreak = 0;
     }
 
-    // În modul AI Precision marcăm „acordat" doar dacă CREPE confirmă
-    // aceeași notă — elimină false-positives pe armonice / zgomot.
-    final crepeConfirmsNote = !_aiPrecisionEnabled ||
-        !_aiHintFresh ||
-        _pitchService.nearestNoteInTuning(_aiFreqHint!, notes).note == n.note;
-
     if (_inTuneStreak >= _kInTuneFramesNeeded &&
         _tuning.notes.contains(n.note) &&
-        !_tunedStrings.contains(n.note) &&
-        crepeConfirmsNote) {
+        !_tunedStrings.contains(n.note)) {
+      // Prima coardă din sesiune → pornim cronometrul pentru istoric.
+      _sessionStartedAt ??= DateTime.now();
       _tunedStrings.add(n.note);
       _playStringTuned(n.note);
       if (_tunedStrings.length == _tuning.notes.length && !_allTuned) {
         _allTuned = true;
         _playAllTuned();
+        _recordSessionIfEligible();
       }
+    }
+
+    _lastYinDisplay = DateTime.now();
+
+    // Revenire din fallback CREPE: numărăm _kYinRecoveryFrames cadre stabile.
+    if (_aiDriving) {
+      _yinRecoveryCount++;
+      if (_yinRecoveryCount < _kYinRecoveryFrames) return;
+      _aiDriving = false;
+      _yinRecoveryCount = 0;
+      AppLogger.i('🎸 [Tuner] YIN stabil — preia acul înapoi de la CREPE');
     }
 
     setState(() {
@@ -364,63 +484,60 @@ class _TunerScreenState extends State<TunerScreen>
     });
   }
 
-  /// CREPE rescuează acul DOAR când YIN a murit în zgomot. Apelată din
-  /// _fireAiWindow exclusiv dacă niciun cadru YIN n-a fost acceptat
-  /// recent (>700ms). Lag-ul e acceptabil aici (ciclul CREPE ~2s);
-  /// easing-ul din _onFrame netezește tranzițiile. Reproduce logica
-  /// „acordat" ca să nu inducem regresie pe sesiune (corzi marcate).
-  void _rescueMeterWithCrepe(double freq) {
-    final notes = _lockedString != null ? [_lockedString!] : _tuning.notes;
-    final n = _pitchService.nearestNoteInTuning(freq, notes);
+  /// CREPE conduce acul — doar în fallback când YIN e mut.
+  ///
+  /// Updatează ȘI starea de „coardă acordată" cu un threshold relaxat
+  /// (`_kInTuneFramesNeededAi`), pentru că request-urile CREPE vin mai rar
+  /// (~1-1.5s) — la threshold-ul YIN (6 cadre) practic n-am marca niciodată
+  /// verde într-un mediu zgomotos unde CREPE conduce.
+  void _driveMeterFromCrepe() {
+    final hz = _aiFreqHint;
+    if (hz == null || _aiNote.isEmpty) return;
+    _lastValidDetection = DateTime.now(); // ține semnalul „viu"
+    if (!mounted) return;
+    setState(() {
+      _freq = hz;
+      _note = _aiNote;
+      _targetCents = _aiCents;
+      _hasSignal = true;
+    });
+    _trackInTune(_aiNote, _aiCents, _kInTuneFramesNeededAi);
+  }
 
-    // Histerezis „acordat"
-    if (!_inTuneHyst && n.cents.abs() < 5) {
-      _inTuneHyst = true;
-    } else if (_inTuneHyst && n.cents.abs() > 9) {
-      _inTuneHyst = false;
-    }
-
-    // Sustained confirm: o predicție CREPE acoperă ~1.2s de audio, deci
-    // valorează cât mai multe cadre YIN. O ponderăm cu 3 → 2 predicții
-    // CREPE consecutive sub 5¢ ating pragul _kInTuneFramesNeeded (6).
-    if (n.note == _tuneCandidate && n.cents.abs() < 5) {
-      _inTuneStreak += 3;
-    } else if (n.cents.abs() < 5) {
-      _tuneCandidate = n.note;
-      _inTuneStreak = 3;
-    } else if (n.cents.abs() > 8) {
+  /// State machine pentru marcarea unei corzi ca acordate. Extras din
+  /// `_onValidPitch` ca să-l poată reutiliza și `_driveMeterFromCrepe`
+  /// cu un threshold diferit (cadrele AI vin mai rar).
+  void _trackInTune(String note, double cents, int framesNeeded) {
+    if (note == _tuneCandidate && cents.abs() < 5) {
+      _inTuneStreak++;
+    } else if (cents.abs() < 5) {
+      _tuneCandidate = note;
+      _inTuneStreak = 1;
+    } else if (cents.abs() > 8) {
       _tuneCandidate = null;
       _inTuneStreak = 0;
     }
-
-    if (_inTuneStreak >= _kInTuneFramesNeeded &&
-        _tuning.notes.contains(n.note) &&
-        !_tunedStrings.contains(n.note)) {
-      _tunedStrings.add(n.note);
-      _playStringTuned(n.note);
+    if (_inTuneStreak >= framesNeeded &&
+        _tuning.notes.contains(note) &&
+        !_tunedStrings.contains(note)) {
+      _sessionStartedAt ??= DateTime.now();
+      _tunedStrings.add(note);
+      _playStringTuned(note);
       if (_tunedStrings.length == _tuning.notes.length && !_allTuned) {
         _allTuned = true;
         _playAllTuned();
+        _recordSessionIfEligible();
       }
     }
-
-    _lastValidDetection = DateTime.now();
-    _restartInactivityTimer();
-
-    setState(() {
-      _freq = freq;
-      _note = n.note;
-      _targetCents = n.cents;
-      _hasSignal = true;
-    });
   }
 
   void _playStringTuned(String note) {
-    // Feedback doar haptic — redarea de sunet în timpul capturii
-    // microfonului blochează stream-ul de intrare pe Android.
+    // Feedback haptic — redarea de sunet în timpul capturii blochează stream-ul pe Android.
     HapticFeedback.mediumImpact();
-    AppLogger.i('✅ [TunerScreen] Coardă acordată: $note '
-        '(${_tunedStrings.length}/${_tuning.notes.length})');
+    AppLogger.i(
+      '✅ [TunerScreen] Coardă acordată: $note '
+      '(${_tunedStrings.length}/${_tuning.notes.length})',
+    );
   }
 
   void _playAllTuned() {
@@ -439,10 +556,34 @@ class _TunerScreenState extends State<TunerScreen>
     });
   }
 
+  /// Salvează în istoric sesiunea curentă (doar dacă userul e logat și
+  /// nu am salvat-o încă). Fire-and-forget — istoricul cloud nu blochează
+  /// niciun flow vizibil userului.
+  void _recordSessionIfEligible() {
+    if (_sessionRecorded) return;
+    final started = _sessionStartedAt;
+    if (started == null) return;
+    _sessionRecorded = true;
+    final duration = DateTime.now().difference(started).inMilliseconds / 1000.0;
+    AppLogger.i(
+      '📜 [Tuner] Sesiune completă: ${_tuning.notes.length} corzi în ${duration.toStringAsFixed(1)}s',
+    );
+    UserDataService.instance.recordSession(
+      instrument: AppSettings.instance.instrumentId,
+      tuningName: _tuning.name,
+      stringsTuned: _tunedStrings.length,
+      totalStrings: _tuning.notes.length,
+      durationSeconds: duration,
+      a4: AppSettings.instance.a4,
+    );
+  }
+
   void _resetSession() {
     setState(() {
       _tunedStrings.clear();
       _allTuned = false;
+      _sessionStartedAt = null;
+      _sessionRecorded = false;
       _recentFreqs.clear();
       _euro.reset();
       _inTuneHyst = false;
@@ -452,20 +593,23 @@ class _TunerScreenState extends State<TunerScreen>
       _hasSignal = false;
       _displayCents = 0;
       _displayColor = _grey;
-      _lastYinAcceptedTime = null;
+      _aiDriving = false;
+      _yinRecoveryCount = 0;
+      _lastYinDisplay = null;
     });
   }
 
   Future<void> _startListening() async {
     if (_listening) return;
 
-    bool permitted = await _audioService.hasPermission();
-    if (!permitted) {
-      permitted = await _audioService.requestPermission();
-    }
+    // Nu cerem permisiunea aici — o face ecranul dedicat.
+    final permitted = await _audioService.hasPermission();
     if (!permitted) {
       if (!mounted) return;
-      setState(() => _permissionDenied = true);
+      setState(() {
+        _permissionChecked = true;
+        _permissionDenied = true;
+      });
       return;
     }
 
@@ -488,21 +632,25 @@ class _TunerScreenState extends State<TunerScreen>
       });
 
       _audioSubscription = _audioService.audioStream?.listen((chunk) async {
-        // ── Pipeline #1: AI Precision — acumulare ferestre 1.2s ─────
-        // Rulează ÎNAINTE de YIN ca să nu pierdem chunk-ul dacă YIN
-        // throw-uiește. Nu blochează YIN (fire-and-forget).
+        // ── Pipeline #1: AI Precision — acumulare ferestre 0.8s ─────
         if (_aiPrecisionEnabled) {
           _aiWindowBuffer.add(chunk);
           if (_aiWindowBuffer.length >= _kAiWindowBytes &&
               !_aiRequestInFlight) {
             final window = _aiWindowBuffer.toBytes();
             _aiWindowBuffer.clear();
-            // Trimite în background — nu așteptăm aici, YIN continuă
-            unawaited(_fireAiWindow(window));
+            // Skip dacă fereastra e liniște — CREPE nu mai inventează un
+            // F# vag din zgomotul de fond și economisim un request.
+            if (_audioRms(window) < _kAiMinRms) {
+              AppLogger.d(
+                '🔍 [Tuner] AI fereastră silențioasă — sar peste request',
+              );
+            } else {
+              // Trimite în background — nu așteptăm aici, YIN continuă.
+              unawaited(_fireAiWindow(window));
+            }
           } else if (_aiWindowBuffer.length >= _kAiWindowBytes * 2) {
-            // Backpressure: dacă cererea anterioară încă rulează și
-            // s-au strâns deja 2 ferestre, aruncăm cea veche (păstrăm
-            // cea proaspătă în buffer pentru următorul ciclu).
+            // Backpressure: cererea anterioară încă rulează, aruncăm fereastra veche.
             final bytes = _aiWindowBuffer.toBytes();
             _aiWindowBuffer.clear();
             _aiWindowBuffer.add(bytes.sublist(_kAiWindowBytes));
@@ -510,19 +658,26 @@ class _TunerScreenState extends State<TunerScreen>
           }
         }
 
+        // ── Fallback CREPE: YIN mut > 700ms + hint proaspăt → CREPE preia acul.
+        if (_aiPrecisionEnabled && !_aiDriving && _aiHintFresh) {
+          final lastYin = _lastYinDisplay;
+          if (lastYin == null ||
+              DateTime.now().difference(lastYin) > _kYinMuteForAi) {
+            AppLogger.i('🤖 [Tuner] YIN mut — CREPE preia acul (fallback)');
+            _aiDriving = true;
+            _yinRecoveryCount = 0;
+            _driveMeterFromCrepe(); // arătăm imediat ce avem de la CREPE
+          }
+        }
+
         // ── Pipeline #2: YIN — pitch în timp real ───────────────────
         final pr = await _pitchService.analyze(chunk);
-        if (!mounted) return;
 
-        // Filtrăm zgomot / voce: doar detecții sigure
+        // Filtrăm zgomot: doar detecții sigure
         if (!pr.pitched || pr.probability < 0.5 || pr.frequency <= 0) {
-          // YIN nu vede pitch. Când AI Precision e ON, CREPE conduce
-          // independent acul (_applyCrepeToMeter din _fireAiWindow) —
-          // nu facem nimic aici. Dropăm semnalul doar dacă NICIO sursă
-          // (YIN sau CREPE) n-a livrat o detecție de _effectiveHold.
+          // Fără pitch — după _holdDuration dropăm semnalul.
           final last = _lastValidDetection;
-          if (last == null ||
-              DateTime.now().difference(last) > _effectiveHold) {
+          if (last == null || DateTime.now().difference(last) > _holdDuration) {
             if (_hasSignal) {
               _recentFreqs.clear();
               _euro.reset();
@@ -530,7 +685,10 @@ class _TunerScreenState extends State<TunerScreen>
               _tuneCandidate = null;
               _inTuneStreak = 0;
               _pendingFreq = null;
-              setState(() => _hasSignal = false);
+              setState(() {
+                _hasSignal = false;
+                _aiDriving = false;
+              });
             }
           }
           return;
@@ -553,8 +711,8 @@ class _TunerScreenState extends State<TunerScreen>
       await _audioSubscription?.cancel();
       _audioSubscription = null;
       _inactivityTimer?.cancel();
-      _ticker.stop();
       if (!mounted) return;
+      _ticker.stop();
 
       AppLogger.w('🔶 [TunerScreen] Captură oprită');
       setState(() {
@@ -568,7 +726,9 @@ class _TunerScreenState extends State<TunerScreen>
         _pendingFreq = null;
         _displayCents = 0;
         _displayColor = _grey;
-        _lastYinAcceptedTime = null;
+        _aiDriving = false;
+        _yinRecoveryCount = 0;
+        _lastYinDisplay = null;
       });
     } catch (e) {
       AppLogger.e('❌ [TunerScreen] Eroare la oprirea capturii', error: e);
@@ -588,15 +748,14 @@ class _TunerScreenState extends State<TunerScreen>
       _pendingFreq = null;
       _hasSignal = false;
       _lastValidDetection = null;
-      _lastYinAcceptedTime = null;
       _tunedStrings.clear();
       _allTuned = false;
+      _sessionStartedAt = null;
+      _sessionRecorded = false;
     });
   }
 
-  /// Toggle AI Precision: când e ON, fluxul audio comun cu YIN
-  /// alimentează un buffer ciclic, iar la fiecare _kAiWindowBytes
-  /// trimitem o fereastră la backend pentru predicție CREPE.
+  /// Activează/dezactivează AI Precision (CREPE backend).
   void _toggleAiPrecision() {
     final next = !_aiPrecisionEnabled;
     AppLogger.i('🤖 [TunerScreen] AI Precision → ${next ? 'ON' : 'OFF'}');
@@ -611,57 +770,84 @@ class _TunerScreenState extends State<TunerScreen>
     _aiFreqHint = null;
     _aiHintTime = null;
     _aiConfidence = 0;
+    _aiNote = '';
+    _aiCents = 0;
+    _aiFailCount = 0;
+    _aiDriving = false;
+    _yinRecoveryCount = 0;
   }
 
-  /// Trimite o fereastră de audio la backend pentru predicție CREPE.
-  /// Backpressure strict: un singur request în zbor; dacă vine alt
-  /// chunk peste, e aruncat (vezi _onAudioChunk).
+  /// Trimite o fereastră audio la backend CREPE. Un singur request în zbor.
   Future<void> _fireAiWindow(Uint8List window) async {
     _aiRequestInFlight = true;
     try {
       final result = await _apiService.detectPitchAI(window);
-      if (!mounted || result == null) return;
+      if (!mounted) return;
 
-      // Filtru #1: confidence prea mic → CREPE nu e sigur, ignorăm
+      // null → eroare rețea; după _kAiMaxFails eșecuri oprim AI Precision.
+      if (result == null) {
+        _aiFailCount++;
+        if (_aiFailCount >= _kAiMaxFails && _aiPrecisionEnabled) {
+          AppLogger.w('🔶 [Tuner] AI Precision oprit — server inaccesibil');
+          setState(() {
+            _aiPrecisionEnabled = false;
+            _resetAiState();
+          });
+          showAppMessage(
+            context,
+            icon: Icons.cloud_off_rounded,
+            title: 'Conexiune indisponibilă',
+            message:
+                'AI Precision are nevoie de internet ca să analizeze '
+                'sunetul. Am revenit la acordarea clasică — funcționează '
+                'perfect și așa.',
+            accent: _aiPurple,
+          );
+        }
+        return;
+      }
+      _aiFailCount = 0; // un răspuns valid → resetăm contorul
+
+      // Filtru #1: confidence prea mic → ignorăm
       if (result.confidence < _kAiMinConfidence) {
-        AppLogger.d('🔍 [Tuner] AI ignorat: conf '
-            '${result.confidence.toStringAsFixed(2)}');
+        AppLogger.d(
+          '🔍 [Tuner] AI ignorat: conf '
+          '${result.confidence.toStringAsFixed(2)}',
+        );
         return;
       }
 
-      // Filtru #2: CREPE poate clamp-a la marginile gamei de note (E1..C8).
-      // Mapăm pe acordaj — dacă cents iese stuck la ±49.5 e probabil
-      // spike, NU folosim ca hint.
-      final notes = _lockedString != null ? [_lockedString!] : _tuning.notes;
+      // Filtru #2: spike la marginea gamei CREPE → ignorăm.
+      final notes = _chromaticMode
+          ? _chromaticNotes
+          : (_lockedString != null ? [_lockedString!] : _tuning.notes);
       final n = _pitchService.nearestNoteInTuning(result.frequency, notes);
       if (n.cents.abs() > _kAiMaxClampedCents) {
-        AppLogger.d('🔍 [Tuner] AI spike edge '
-            '(${n.cents.toStringAsFixed(0)}c) ignorat');
+        AppLogger.d(
+          '🔍 [Tuner] AI spike edge '
+          '(${n.cents.toStringAsFixed(0)}c) ignorat',
+        );
         return;
       }
 
-      _aiFreqHint = result.frequency;
-      _aiHintTime = DateTime.now();
-      _aiConfidence = result.confidence;
-
-      // YIN conduce acul cât e viu. CREPE rescuează acul DOAR când YIN
-      // a murit (zgomot greu) — altfel CREPE rămâne referință tăcută
-      // (octavă + validare), fără să sacadeze linia.
-      final yinAlive = _lastYinAcceptedTime != null &&
-          DateTime.now().difference(_lastYinAcceptedTime!) <
-              const Duration(milliseconds: 700);
-      if (yinAlive) {
-        // YIN conduce — declanșăm doar un rebuild ușor pentru strip-ul AI
-        if (mounted) setState(() {});
-      } else {
-        _rescueMeterWithCrepe(result.frequency);
+      if (mounted) {
+        setState(() {
+          _aiFreqHint = result.frequency;
+          _aiHintTime = DateTime.now();
+          _aiConfidence = result.confidence;
+          _aiNote = n.note;
+          _aiCents = n.cents;
+        });
       }
 
+      // CREPE conduce acul doar când YIN e mut.
+      if (_aiDriving) _driveMeterFromCrepe();
+
       AppLogger.i(
-        '🤖 [Tuner] AI hint: ${result.frequency.toStringAsFixed(2)}Hz '
+        '🤖 [Tuner] AI: ${result.frequency.toStringAsFixed(2)}Hz '
         'conf ${(result.confidence * 100).toStringAsFixed(0)}% '
-        '→ ${n.note} ${n.cents.toStringAsFixed(0)}c '
-        '(${yinAlive ? "YIN conduce" : "CREPE rescue"})',
+        '→ ${n.note} ${n.cents.toStringAsFixed(0)}c'
+        '${_aiDriving ? " (CREPE conduce)" : ""}',
       );
     } catch (e, st) {
       AppLogger.e('❌ [Tuner] AI window error', error: e, stackTrace: st);
@@ -670,38 +856,12 @@ class _TunerScreenState extends State<TunerScreen>
     }
   }
 
-  /// True cât hint-ul AI mai e proaspăt (folosit ca ref de octavă +
-  /// gating YIN + UI).
+  /// True cât hint-ul AI mai e proaspăt — pentru afișajul strip-ului.
   bool get _aiHintFresh =>
       _aiPrecisionEnabled &&
       _aiFreqHint != null &&
       _aiHintTime != null &&
       DateTime.now().difference(_aiHintTime!) < _kAiHintFreshness;
-
-  /// Cât rămâne afișată ultima notă după ce sunetul se oprește. În AI
-  /// Precision e mai lung decât ciclul CREPE (~2-2.5s) ca să nu pâlpâie
-  /// semnalul între două predicții consecutive.
-  Duration get _effectiveHold =>
-      _aiPrecisionEnabled ? const Duration(seconds: 4) : _holdDuration;
-
-  /// True când AI Precision e ON și YIN nu mai contribuie (zgomot) —
-  /// CREPE „cară" singur acul. Driveuiește indicatorul „· AI".
-  bool get _aiCarrying =>
-      _aiPrecisionEnabled &&
-      _hasSignal &&
-      (_lastYinAcceptedTime == null ||
-          DateTime.now().difference(_lastYinAcceptedTime!) >
-              const Duration(milliseconds: 900));
-
-  void _featureSoon(String name) {
-    AppLogger.i('🔶 [TunerScreen] „$name" — funcționalitate în curând');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('„$name" — în curând'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
 
   (String, String) _splitNote(String note) {
     final m = RegExp(r'^([A-G]#?)(\d+)$').firstMatch(note);
@@ -724,128 +884,292 @@ class _TunerScreenState extends State<TunerScreen>
     final showNote = _hasSignal && _note.isNotEmpty;
 
     return Scaffold(
-      backgroundColor: _bg,
+      // Fundal transparent — `MainShell` pictează AppBackground unitar
+      // sub PageView (fără cusături la swipe).
+      backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        title: const AppLogoBanner(),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _openSettings,
-          ),
-        ],
-      ),
+      // AppBar comun (logo + sign-up + setări) — aceleași pentru Acordor și
+      // Metronom (vezi `BrandAppBar`). Sărit doar pe ecranul de permisiune.
+      appBar: (_permissionChecked && !_permissionDenied)
+          ? BrandAppBar(onSettings: _openSettings)
+          : null,
       body: Stack(
         children: [
-          const AppBackground(),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              child: Column(
-                children: [
-                  // Spațiu pentru AppBar-ul transparent (body extins în
-                  // spatele lui ca gradientul să fie continuu).
-                  const SizedBox(height: kToolbarHeight),
-                  _buildHeader(),
-                  const SizedBox(height: 16),
-                  _buildTuningSelector(),
-                  const SizedBox(height: 12),
-                  _buildModeToggle(),
-                  const SizedBox(height: 18),
-                  _buildStringRow(),
-                  const Spacer(flex: 3),
+          if (!_permissionChecked)
+            // Verificăm permisiunea (instant) — doar fundalul, fără flash
+            // de tuner în spatele dialogului de sistem.
+            const SizedBox.shrink()
+          else if (_permissionDenied)
+            _buildPermissionScreen()
+          else
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                child: Column(
+                  children: [
+                    // Spațiu pentru AppBar-ul transparent (body extins în
+                    // spate ca gradientul să fie continuu).
+                    const SizedBox(height: kToolbarHeight - 12),
+                    // În mod cromatic ascundem instrument + tuning selector
+                    // + string row — concepte fără sens când detectăm orice
+                    // notă. Userul vede direct meter-ul, curat și focused.
+                    if (!_chromaticMode) ...[
+                      _buildHeader(),
+                      const SizedBox(height: 14),
+                      _buildTuningSelector(),
+                      const SizedBox(height: 14),
+                    ] else ...[
+                      // Header subțire pentru modul cromatic — semnal
+                      // vizual că nu mai suntem pe instrumentul curent.
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _green.withAlpha(22),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: _green.withAlpha(80)),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.piano_outlined, color: _green, size: 18),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Mod cromatic — detectează orice notă',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+                    _buildModeToggle(),
+                    const SizedBox(height: 18),
+                    if (!_chromaticMode) _buildStringRow(),
+                    const Spacer(flex: 3),
 
-                  // Panoul central — „instrumentul de măsură"
-                  _buildTunerPanel(showNote, noteName, octave),
+                    // Panoul central — „instrumentul de măsură"
+                    _buildTunerPanel(showNote, noteName, octave),
 
-                  if (_aiPrecisionEnabled) ...[
-                    const SizedBox(height: 12),
-                    _buildAiStatusStrip(),
-                  ],
-                  if (_permissionDenied) ...[
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        setState(() => _permissionDenied = false);
-                        _startListening();
-                      },
-                      icon: const Icon(Icons.mic),
-                      label: const Text('Permite microfonul'),
+                    if (_aiPrecisionEnabled) ...[
+                      const SizedBox(height: 12),
+                      _buildAiStatusStrip(),
+                    ],
+
+                    const Spacer(flex: 3),
+                    _buildSessionFooter(),
+                    // Spațiu rezervat pentru bara persistentă plutitoare —
+                    // bara aparține `MainShell`, dar conținutul nostru nu
+                    // trebuie să ajungă sub ea.
+                    SizedBox(
+                      height: PersistentFeatureBar.reservedHeight(context),
                     ),
                   ],
-
-                  const Spacer(flex: 3),
-                  _buildSessionFooter(),
-                  const SizedBox(height: 10),
-                  _buildFeatureBar(),
-                  const SizedBox(height: 6),
-                ],
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
   }
 
-  /// Header: numele instrumentului activ + numărul de corzi. Tap pe tot
-  /// rândul → deschide Setări (acolo se schimbă instrumentul). Acordajul
-  /// curent e arătat de selectorul de sub el.
+  /// Ecran dedicat când microfonul e refuzat — fără el aplicația nu poate
+  /// funcționa, deci blocăm tot până la aprobare. Intră cu o animație
+  /// scurtă (fade + slide).
+  Widget _buildPermissionScreen() {
+    return SafeArea(
+      child: TweenAnimationBuilder<double>(
+        tween: Tween<double>(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 540),
+        curve: Curves.easeOutCubic,
+        builder: (context, t, child) => Opacity(
+          opacity: t.clamp(0.0, 1.0),
+          child: Transform.translate(
+            offset: Offset(0, 26 * (1 - t)),
+            child: child,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 30),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 86,
+                height: 86,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _green.withAlpha(26),
+                  border: Border.all(color: _green.withAlpha(95), width: 1.5),
+                ),
+                child: const Icon(
+                  Icons.mic_none_rounded,
+                  color: _green,
+                  size: 40,
+                ),
+              ),
+              const SizedBox(height: 28),
+              const Text.rich(
+                TextSpan(
+                  style: TextStyle(
+                    fontSize: 31,
+                    fontWeight: FontWeight.bold,
+                    height: 1.22,
+                  ),
+                  children: [
+                    TextSpan(
+                      text: 'Permite accesul la ',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    TextSpan(
+                      text: 'microfon',
+                      style: TextStyle(color: _green),
+                    ),
+                    TextSpan(
+                      text: ' ca să continui',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Folosim microfonul telefonului doar pentru a-ți detecta '
+                'și acorda corzile — nimic nu e înregistrat sau trimis.',
+                style: TextStyle(
+                  color: Colors.white54,
+                  fontSize: 15,
+                  height: 1.45,
+                ),
+              ),
+              const SizedBox(height: 30),
+              ElevatedButton(
+                onPressed: _requestMicAccess,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _green,
+                  foregroundColor: Colors.black,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 28,
+                    vertical: 15,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(26),
+                  ),
+                ),
+                child: const Text(
+                  'Permite microfonul',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Cere permisiunea de microfon; dacă e refuzată permanent, deschide
+  /// setările de sistem (singura cale după un refuz permanent).
+  Future<void> _requestMicAccess() async {
+    AppLogger.i('🎤 [TunerScreen] Cerere acces microfon din ecranul dedicat');
+    final granted = await _audioService.requestPermission();
+    if (!mounted) return;
+    if (granted) {
+      // Push welcome ÎNAINTE de setState — fără frame intermediar de tuner.
+      _maybeShowWelcomeAuth();
+      setState(() => _permissionDenied = false);
+      ActivePage.instance.setBarAllowed(true);
+      _startListening();
+    } else {
+      await _audioService.openSystemSettings();
+    }
+  }
+
+  /// Header: instrument activ, tap deschide Setări.
   Widget _buildHeader() {
     final inst = AppSettings.instance.instrument;
     return GestureDetector(
       onTap: _openSettings,
       behavior: HitTestBehavior.opaque,
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            alignment: Alignment.center,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
             decoration: BoxDecoration(
-              color: Colors.white.withAlpha(13),
-              borderRadius: BorderRadius.circular(13),
-              border: Border.all(color: Colors.white.withAlpha(22)),
+              color: Colors.white.withAlpha(14),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white.withAlpha(26)),
             ),
-            child: Text(inst.emoji, style: const TextStyle(fontSize: 23)),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
-                Text(
-                  inst.name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.2,
+                Container(
+                  width: 52,
+                  height: 52,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withAlpha(16),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Text(inst.emoji, style: const TextStyle(fontSize: 27)),
+                ),
+                const SizedBox(width: 13),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        inst.name,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${inst.stringCount} corzi  ·  ${_tuning.name}',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 1),
-                Text(
-                  '${inst.stringCount} corzi',
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 12,
+                Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withAlpha(14),
+                  ),
+                  child: const Icon(
+                    Icons.tune,
+                    size: 17,
+                    color: Colors.white60,
                   ),
                 ),
               ],
             ),
           ),
-          Icon(Icons.tune, size: 20, color: Colors.white.withAlpha(120)),
-        ],
+        ),
       ),
     );
   }
 
-  /// Panoul central: nota detectată, frecvența, acul cu cenți și
-  /// statusul — grupate într-un card care „prinde viață" în verde când
-  /// coarda e acordată (glow + bordură).
+  /// Panoul central: notă, frecvență, ac cu cenți, status acordaj.
   Widget _buildTunerPanel(bool showNote, String noteName, String octave) {
     final showHz = AppSettings.instance.showFrequency;
 
@@ -907,7 +1231,8 @@ class _TunerScreenState extends State<TunerScreen>
                   : _buildIdlePlaceholder(),
             ),
           ),
-          // Frecvența (Hz) — opțională (Setări → Afișaj)
+          // Frecvența (Hz) — opțională (Setări → Afișaj). Când CREPE
+          // conduce acul (fallback în zgomot), marcăm cu „· AI".
           if (showHz)
             SizedBox(
               height: 20,
@@ -921,35 +1246,38 @@ class _TunerScreenState extends State<TunerScreen>
                         ),
                         children: [
                           TextSpan(text: '${_freq.toStringAsFixed(1)} Hz'),
-                          if (_aiCarrying)
+                          if (_aiDriving)
                             TextSpan(
                               text: '   ·   AI',
                               style: TextStyle(
-                                color: _aiPurple.withAlpha(220),
-                                fontWeight: FontWeight.w600,
+                                color: _aiPurple.withAlpha(230),
+                                fontWeight: FontWeight.w700,
                                 fontSize: 12,
-                                letterSpacing: 0.6,
+                                letterSpacing: 0.5,
                               ),
                             ),
                         ],
                       ),
                     )
-                  : null,
+                  : const SizedBox.shrink(),
             )
           else
             const SizedBox(height: 4),
           const SizedBox(height: 14),
 
-          // Meter — MEREU vizibil (idle = ac centrat, gri)
-          SizedBox(
-            height: 84,
-            width: double.infinity,
-            child: CustomPaint(
-              painter: _TunerMeterPainter(
-                cents: _displayCents,
-                color: _displayColor,
-                hasSignal: _hasSignal,
-                inTune: _inTuneHyst,
+          // Meter — MEREU vizibil (idle = ac centrat, gri). RepaintBoundary
+          // izolează re-pictarea acului de restul arborelui.
+          RepaintBoundary(
+            child: SizedBox(
+              height: 84,
+              width: double.infinity,
+              child: CustomPaint(
+                painter: _TunerMeterPainter(
+                  cents: _displayCents,
+                  color: _displayColor,
+                  hasSignal: _hasSignal,
+                  inTune: _inTuneHyst,
+                ),
               ),
             ),
           ),
@@ -958,7 +1286,7 @@ class _TunerScreenState extends State<TunerScreen>
           Text(
             showNote
                 ? '${_targetCents > 0 ? "+" : ""}'
-                    '${_targetCents.toStringAsFixed(0)} ¢'
+                      '${_targetCents.toStringAsFixed(0)} ¢'
                 : '—',
             style: TextStyle(
               fontSize: 23,
@@ -982,44 +1310,55 @@ class _TunerScreenState extends State<TunerScreen>
     );
   }
 
-  /// Placeholder „viu" când nu e semnal: o notă muzicală într-un cerc
-  /// care respiră lin (oscilatorul _breath), în loc de o liniuță seacă.
+  /// Placeholder animat când nu e semnal.
   Widget _buildIdlePlaceholder() {
-    final scale = 0.92 + 0.08 * _breath;
+    final scale = 0.93 + 0.07 * _breath;
+    // Notă cu tentă verde-grizat care variază lin cu respirația.
+    final noteTint = Color.lerp(
+      const Color(0xFF7E94A0),
+      _green,
+      0.20 + 0.30 * _breath,
+    )!;
     return Transform.scale(
       scale: scale,
       child: Container(
-        width: 94,
-        height: 94,
+        width: 96,
+        height: 96,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: Colors.white.withAlpha((5 + 8 * _breath).round()),
+          gradient: RadialGradient(
+            colors: [
+              _green.withAlpha((7 + 11 * _breath).round()),
+              Colors.transparent,
+            ],
+          ),
           border: Border.all(
-            color: Colors.white.withAlpha((12 + 20 * _breath).round()),
+            color: _green.withAlpha((15 + 24 * _breath).round()),
             width: 1.5,
           ),
         ),
         child: Icon(
           Icons.music_note,
           size: 44,
-          color: Colors.white.withAlpha((26 + 34 * _breath).round()),
+          color: noteTint.withAlpha((75 + 55 * _breath).round()),
         ),
       ),
     );
   }
 
-  /// Strip sub meter: arată că AI Precision lucrează în background.
-  /// Bulina pulsează CONTINUU (oscilatorul _breath) cât modul e ON;
-  /// afișează ultima frecvență CREPE + confidence ca repere de încredere.
+  /// Strip AI (CREPE) sub meter — a doua opinie, independent de acul YIN.
   Widget _buildAiStatusStrip() {
-    final hz = _aiFreqHint;
-    final conf = _aiConfidence;
     final fresh = _aiHintFresh;
-    // Bulina + glow respiră continuu; mai vie când hint-ul e proaspăt.
-    final pulse = fresh ? _breath : _breath * 0.4;
+    final hz = _aiFreqHint;
+    final hasReading = hz != null && _aiNote.isNotEmpty;
+    // Iconița sparkle pulsează lin cu respirația (mai vie când e proaspăt).
+    final pulse = fresh ? _breath : _breath * 0.35;
+    final centsTxt = _aiCents == 0
+        ? '0¢'
+        : '${_aiCents > 0 ? '+' : ''}${_aiCents.toStringAsFixed(0)}¢';
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
       decoration: BoxDecoration(
         color: _aiCardBg,
         borderRadius: BorderRadius.circular(14),
@@ -1028,54 +1367,56 @@ class _TunerScreenState extends State<TunerScreen>
         ),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 9,
-            height: 9,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _aiPurple.withAlpha((90 + 165 * pulse).round()),
-              boxShadow: [
-                BoxShadow(
-                  color: _aiPurple.withAlpha((30 + 110 * pulse).round()),
-                  blurRadius: 3 + 9 * pulse,
-                ),
-              ],
-            ),
+          Icon(
+            Icons.auto_awesome,
+            color: _aiPurple.withAlpha((150 + 105 * pulse).round()),
+            size: 17,
           ),
-          const SizedBox(width: 10),
-          const Icon(Icons.auto_awesome, color: _aiPurple, size: 16),
-          const SizedBox(width: 6),
+          const SizedBox(width: 7),
           const Text(
-            'AI Precision',
+            'AI',
             style: TextStyle(
               color: Colors.white70,
               fontWeight: FontWeight.bold,
               fontSize: 12,
-              letterSpacing: 0.4,
+              letterSpacing: 0.5,
             ),
           ),
-          const SizedBox(width: 14),
-          Text(
-            hz != null ? '${hz.toStringAsFixed(1)} Hz' : 'analizez…',
-            style: const TextStyle(
-              color: Colors.white60,
-              fontSize: 12,
-              fontFeatures: [FontFeature.tabularFigures()],
+          const Spacer(),
+          if (hasReading) ...[
+            // Nota AI + cenți
+            Text(
+              '$_aiNote  $centsTxt',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
-          if (hz != null) ...[
             const SizedBox(width: 10),
             Text(
-              '${(conf * 100).toStringAsFixed(0)}%',
+              '${hz.toStringAsFixed(1)} Hz',
+              style: const TextStyle(
+                color: Colors.white38,
+                fontSize: 12,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              '${(_aiConfidence * 100).toStringAsFixed(0)}%',
               style: TextStyle(
-                color: conf > 0.7 ? _aiPurple : Colors.white38,
+                color: _aiConfidence > 0.7 ? _aiPurple : Colors.white38,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
             ),
-          ],
+          ] else
+            const Text(
+              'analizez…',
+              style: TextStyle(color: Colors.white38, fontSize: 12),
+            ),
         ],
       ),
     );
@@ -1188,6 +1529,9 @@ class _TunerScreenState extends State<TunerScreen>
     _inTuneStreak = 0;
     _pendingFreq = null;
     _hasSignal = false;
+    _lastYinDisplay = null;
+    _aiDriving = false;
+    _yinRecoveryCount = 0;
   }
 
   void _lockString(String full) {
@@ -1196,6 +1540,28 @@ class _TunerScreenState extends State<TunerScreen>
       _lockedString = full;
       _clearDetection();
     });
+    // Sunetul DE REFERINȚĂ blochează AudioRecord pe Android dacă rulează
+    // în paralel cu MediaPlayer. Soluție: oprim captura, redăm nota,
+    // așteptăm să se termine, repornim — fără chunk-uri pierdute, fără
+    // un mic-stream blocat „mut" la final.
+    _playReferenceNote(full);
+  }
+
+  /// Pauză YIN+CREPE, redă nota timp de ~1.5s, apoi repornește captura.
+  Future<void> _playReferenceNote(String full) async {
+    final wasListening = _listening;
+    if (wasListening) {
+      await _stopListening();
+    }
+    // Curățăm un buffer AI vechi — altfel primul request după restart ar
+    // conține audio dinaintea notei de referință.
+    _aiWindowBuffer.clear();
+    unawaited(NoteAudio.instance.play(full, a4: AppSettings.instance.a4));
+    await Future.delayed(const Duration(milliseconds: 1500));
+    if (!mounted) return;
+    if (wasListening && _permissionChecked && !_permissionDenied) {
+      _startListening();
+    }
   }
 
   void _setAuto() {
@@ -1206,96 +1572,82 @@ class _TunerScreenState extends State<TunerScreen>
     });
   }
 
-  // Bara cu modurile: Auto / Manual (stânga) + AI Precision (dreapta).
-  // Auto = detectează coarda singur; tap pe o coardă (rândul de jos) =
-  // mod manual pe acea coardă. AI Precision = activează refinarea CREPE
-  // continuă în paralel cu YIN.
+  // Bara moduri: AUTO + AI Precision, două toggle-uri iOS.
   Widget _buildModeToggle() {
     final auto = _lockedString == null;
     final aiOn = _aiPrecisionEnabled;
 
     return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        // Pill „Auto" — verde activ, gri când în mod manual
+        // ── AUTO ──
         GestureDetector(
-          onTap: auto ? null : _setAuto,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              color: auto ? _green : _track,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Icons.search e mai sugestiv decât autorenew pentru
-                // „caută automat coarda" (target/scan)
-                Icon(Icons.search,
-                    size: 15, color: auto ? Colors.black : Colors.white60),
-                const SizedBox(width: 5),
-                Text(
-                  auto
-                      ? 'Auto'
-                      : 'Manual: ${_splitNote(_lockedString!).$1}'
-                          '${_splitNote(_lockedString!).$2}',
-                  style: TextStyle(
-                    color: auto ? Colors.black : Colors.white60,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
+          behavior: HitTestBehavior.opaque,
+          onTap: () => auto ? _lockString(_tuning.notes.first) : _setAuto(),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.gps_fixed,
+                size: 15,
+                color: auto ? _green : Colors.white38,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                'AUTO',
+                style: TextStyle(
+                  color: auto ? Colors.white : Colors.white38,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12.5,
+                  letterSpacing: 0.6,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 9),
+              _IosToggle(value: auto, activeColor: _green),
+            ],
           ),
         ),
-        const SizedBox(width: 10),
-        // Pill „AI Precision" — purple când ON, gri când OFF
+        // ── AI Precision ──
         GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: _toggleAiPrecision,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              color: aiOn ? _aiPurple : _track,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: aiOn && _aiHintFresh
-                  ? [BoxShadow(color: _aiPurple.withAlpha(120), blurRadius: 10)]
-                  : null,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.auto_awesome,
-                  size: 15,
-                  color: aiOn ? Colors.white : Colors.white60,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.auto_awesome,
+                size: 15,
+                color: aiOn ? _aiPurple : Colors.white38,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                'AI Precision',
+                style: TextStyle(
+                  color: aiOn ? Colors.white : Colors.white38,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12.5,
+                  letterSpacing: 0.3,
                 ),
-                const SizedBox(width: 5),
-                Text(
-                  'AI Precision',
-                  style: TextStyle(
-                    color: aiOn ? Colors.white : Colors.white60,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 9),
+              _IosToggle(value: aiOn, activeColor: _aiPurple, glow: true),
+            ],
           ),
         ),
       ],
     );
   }
 
-  // Cele 6 corzi. Tap = blochează pe acea coardă (mod manual); tap din
-  // nou pe ea = revine la Auto. Verde fix dacă acordată în sesiune.
+  // Cele 6 corzi — tap blochează/deblochează coarda. Verde = acordată.
+  // În modul stângaci ordinea e oglindită (coarda joasă în dreapta).
   Widget _buildStringRow() {
+    final notes = AppSettings.instance.leftHanded
+        ? _tuning.notes.reversed.toList(growable: false)
+        : _tuning.notes;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: List.generate(_tuning.notes.length, (i) {
-        final full = _tuning.notes[i];
+      children: List.generate(notes.length, (i) {
+        final full = notes[i];
         final (name, _) = _splitNote(full);
         final tuned = _tunedStrings.contains(full);
         final active = _hasSignal && full == _note;
@@ -1352,68 +1704,55 @@ class _TunerScreenState extends State<TunerScreen>
     );
   }
 
-  // Bara cu funcționalitățile aplicației (roadmap), cu efect de sticlă
-  // (glassmorphism): BackdropFilter estompează fundalul cu glow-uri de
-  // dedesubt. „Acordor" e activ; „Setări" e doar în AppBar (nu dublăm).
-  Widget _buildFeatureBar() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withAlpha(13),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.white.withAlpha(28)),
-          ),
-          padding: const EdgeInsets.symmetric(vertical: 9),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _featureItem(Icons.graphic_eq, 'Acordor', active: true),
-              _featureItem(
-                Icons.av_timer,
-                'Metronom',
-                onTap: () => _featureSoon('Metronom'),
-              ),
-              _featureItem(
-                Icons.library_music,
-                'Acorduri',
-                onTap: () => _featureSoon('Acorduri'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  // Bara persistentă cu „Acordor / Metronom / Cont" e găzduită acum de
+  // `MainShell` (vezi `PersistentFeatureBar`) — Tuner doar rezervă spațiu
+  // jos pentru ea.
+}
 
-  Widget _featureItem(
-    IconData icon,
-    String label, {
-    bool active = false,
-    VoidCallback? onTap,
-  }) {
-    final color = active ? _green : Colors.white54;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: color, size: 24),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontSize: 11,
-                fontWeight: active ? FontWeight.bold : FontWeight.w500,
-              ),
-            ),
-          ],
+/// Comutator stil iOS — pistă rotunjită + bilă animată. Glow opțional.
+class _IosToggle extends StatelessWidget {
+  const _IosToggle({
+    required this.value,
+    required this.activeColor,
+    this.glow = false,
+  });
+
+  final bool value;
+  final Color activeColor;
+  final bool glow;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      width: 46,
+      height: 27,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: value ? activeColor : const Color(0xFF2E2E2E),
+        boxShadow: value && glow
+            ? [
+                BoxShadow(
+                  color: activeColor.withAlpha(150),
+                  blurRadius: 12,
+                  spreadRadius: -1,
+                ),
+              ]
+            : null,
+      ),
+      child: AnimatedAlign(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          width: 21,
+          height: 21,
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.white,
+          ),
         ),
       ),
     );
@@ -1455,7 +1794,7 @@ class _TunerMeterPainter extends CustomPainter {
     );
     canvas.drawRRect(trackRect, Paint()..color = _track);
 
-    // Zona „acordat" (±5¢) — verde translucid
+    // Zona „acordat" (±5¢)
     final zone = RRect.fromLTRBR(
       _mapX(-5, w),
       cy - 5,
@@ -1483,7 +1822,7 @@ class _TunerMeterPainter extends CustomPainter {
     _drawLabel(canvas, '0', _mapX(0, w), cy + 22, Colors.white54);
     _drawLabel(canvas, '♯', _mapX(50, w), cy + 22, Colors.white38);
 
-    // Indicatorul
+    // Indicator
     final px = _mapX(hasSignal ? cents : 0, w);
     final pointerColor = hasSignal ? color : _grey;
 
@@ -1505,13 +1844,7 @@ class _TunerMeterPainter extends CustomPainter {
     canvas.drawCircle(Offset(px, cy), 6, Paint()..color = pointerColor);
   }
 
-  void _drawLabel(
-    Canvas canvas,
-    String text,
-    double x,
-    double y,
-    Color color,
-  ) {
+  void _drawLabel(Canvas canvas, String text, double x, double y, Color color) {
     final tp = TextPainter(
       text: TextSpan(
         text: text,

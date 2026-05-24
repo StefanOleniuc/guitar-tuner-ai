@@ -46,5 +46,9 @@ dist/
 dev_logs/
 backend/server_logs/
 
+# Bază de date locală (conturi) — la deploy se folosește PostgreSQL
+backend/data/
+*.db
+
 # Claude Code local config
 .claude/

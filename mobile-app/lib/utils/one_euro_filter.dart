@@ -7,7 +7,7 @@ import 'dart:math';
 /// când coarda susținută e de fapt stabilă.
 class OneEuroFilter {
   OneEuroFilter({
-    this.minCutoff = 0.5,
+    this.minCutoff = 0.85,
     this.beta = 0.05,
     this.dCutoff = 1.0,
   });

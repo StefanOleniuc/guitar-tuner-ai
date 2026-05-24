@@ -9,3 +9,9 @@ python-multipart==0.0.29
 crepe==0.0.16
 tensorflow==2.21.0
 numpy>=1.26,<3
+
+# Autentificare (email + parolă, JWT)
+bcrypt==4.2.1
+pyjwt==2.10.1
+# Verificarea domeniului de email prin DNS (înregistrări MX)
+dnspython==2.7.0

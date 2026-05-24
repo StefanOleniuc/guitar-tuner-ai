@@ -26,6 +26,12 @@ class AudioService {
     return status.isGranted;
   }
 
+  /// Deschide setările de sistem — singura cale după un refuz permanent.
+  Future<void> openSystemSettings() async {
+    AppLogger.i('🎤 [AudioService] Deschid setările de sistem');
+    await openAppSettings();
+  }
+
   Future<void> startRecording() async {
     if (!await hasPermission()) {
       throw Exception('Permisiunea pentru microfon nu a fost acordată');
@@ -34,15 +40,14 @@ class AudioService {
     try {
       AppLogger.i('🎤 [AudioService] Pornire captură audio...');
 
-      // 16kHz mono PCM16 — format optim pentru algoritmi de pitch detection
+      // 16kHz mono PCM16 — format optim pentru pitch detection.
       const config = RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
         numChannels: 1,
       );
 
-      // Broadcast: permitem multipli ascultători (ex. listener-ul
-      // real-time al tunerului + o captură punctuală pentru AI).
+      // Broadcast: permite multipli ascultători (tuner + captură AI).
       final source = await _recorder.startStream(config);
       _audioStream = source.asBroadcastStream();
       _isRecording = true;

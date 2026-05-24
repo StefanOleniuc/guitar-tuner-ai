@@ -10,9 +10,8 @@ import '../utils/app_logger.dart';
 import '../utils/constants.dart';
 
 class ApiService {
-  /// Trimite un sample PCM16 (~1.5 s) la backend pentru detecție AI cu
-  /// CREPE. Returnează rezultatul sau `null` dacă apare orice eroare
-  /// (rețea, timeout, parsing) — apelantul afișează un mesaj prietenos.
+  /// Trimite un sample PCM16 (~1.5s) la backend pentru detecție AI CREPE.
+  /// Returnează null la orice eroare — apelantul afișează un mesaj prietenos.
   Future<CrepePitchResult?> detectPitchAI(Uint8List pcm16Bytes) async {
     final url =
         '${ApiConstants.apiBaseUrl}${ApiConstants.endpointDetectPitchAI}';
