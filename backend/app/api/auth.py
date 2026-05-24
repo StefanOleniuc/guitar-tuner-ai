@@ -223,6 +223,10 @@ def _send_via_resend(to_email: str, subject: str, body: str) -> bool:
         headers={
             "Authorization": f"Bearer {settings.RESEND_API_KEY}",
             "Content-Type": "application/json",
+            # Cloudflare (în fața Resend API) blochează default User-Agent-ul
+            # urllib ("Python-urllib/3.x") cu eroare 1010. Trimitem unul „normal".
+            "User-Agent": "GTuneAI-Backend/1.0 (+https://guitar-tuner-ai.up.railway.app)",
+            "Accept": "application/json",
         },
         method="POST",
     )
