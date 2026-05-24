@@ -51,7 +51,7 @@ def _check_email_domain(email: str) -> tuple[bool, str | None]:
     if domain in _DISPOSABLE_DOMAINS:
         return False, "Adresele de email temporare nu sunt acceptate."
     try:
-        answers = dns.resolver.resolve(domain, "MX", lifetime=4.0)
+        answers = dns.resolver.resolve(domain, "MX", lifetime=2.5)
         if len(answers) > 0:
             return True, None
         return False, "Domeniul adresei de email nu poate primi mesaje."
@@ -60,7 +60,7 @@ def _check_email_domain(email: str) -> tuple[bool, str | None]:
     except dns.resolver.NoAnswer:
         # Domeniu fără MX → fallback pe A (RFC 5321).
         try:
-            dns.resolver.resolve(domain, "A", lifetime=4.0)
+            dns.resolver.resolve(domain, "A", lifetime=2.5)
             return True, None
         except dns.exception.DNSException:
             return False, "Domeniul adresei de email nu poate primi mesaje."

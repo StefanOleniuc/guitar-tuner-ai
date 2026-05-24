@@ -27,7 +27,7 @@ class ApiConstants {
   static const Duration apiTimeout = Duration(seconds: 5);
   // CREPE rulează pe TF, primul răspuns poate fi mai lent → mai mult timp
   static const Duration aiTimeout = Duration(seconds: 10);
-  static const Duration authTimeout = Duration(seconds: 8);
+  static const Duration authTimeout = Duration(seconds: 20);
   // Sync „contul meu" — preferințe + istoric (rețea low-priority)
   static const Duration userDataTimeout = Duration(seconds: 8);
 }
