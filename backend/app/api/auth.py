@@ -3,11 +3,14 @@
 Email + parolă, token JWT. Stocare în SQLite (vezi auth_db).
 """
 
+import json
 import logging
 import re
 import secrets
 import smtplib
 import socket
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 
@@ -195,32 +198,84 @@ _reset_tokens: dict[str, tuple[str, datetime]] = {}
 _OTP_VALID_MINUTES = 15
 
 
-def _send_reset_email(to_email: str, code: str) -> None:
-    """Trimite codul OTP prin Gmail SMTP.
+def _send_via_resend(to_email: str, subject: str, body: str) -> bool:
+    """Trimite email prin Resend HTTPS API.
 
-    Încearcă întâi STARTTLS pe port 587 (cel mai larg permis de PaaS),
-    cu fallback pe SMTP_SSL port 465. Ambele cu timeout de 10s ca să nu
-    atârne indefinit pe Railway dacă portul e blocat.
+    Returnează True la succes, False la eșec. NU aruncă excepții —
+    apelantul decide dacă rulează fallback (SMTP).
     """
-    from app.config import settings  # import local evită circular import la startup
+    from app.config import settings
+
+    if not settings.RESEND_API_KEY:
+        return False
+
+    payload = json.dumps(
+        {
+            "from": settings.RESEND_FROM,
+            "to": [to_email],
+            "subject": subject,
+            "text": body,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        logger.info("🔐 [auth] Resend: trimit email către %s…", to_email)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if 200 <= resp.status < 300:
+                logger.info("🔐 [auth] Resend: email trimis OK (status %d)", resp.status)
+                return True
+            logger.error("🔐 [auth] Resend: răspuns neașteptat %d", resp.status)
+            return False
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        logger.error("🔐 [auth] Resend HTTP %d: %s", exc.code, body)
+        return False
+    except Exception as exc:
+        logger.error("🔐 [auth] Resend a eșuat: %s", exc)
+        return False
+
+
+def _send_reset_email(to_email: str, code: str) -> None:
+    """Trimite codul OTP. Prioritate: Resend (HTTPS) → SMTP Gmail (fallback).
+
+    Pe Railway/PaaS porturile SMTP sunt blocate → doar Resend funcționează.
+    Local, dacă nu ai cheie Resend, se folosește SMTP direct.
+    """
+    subject = f"GTune AI — Cod resetare parolă: {code}"
+    body = (
+        f"Codul tău de resetare parolă GTune AI este:\n\n"
+        f"  {code}\n\n"
+        f"Codul este valabil {_OTP_VALID_MINUTES} minute.\n"
+        f"Dacă nu ai cerut resetarea parolei, ignoră acest mesaj."
+    )
+
+    # 1) Încercăm Resend (merge și pe Railway).
+    if _send_via_resend(to_email, subject, body):
+        return
+
+    # 2) Fallback SMTP — doar dacă avem credentiale Gmail și suntem
+    #    pe o platformă care permite outbound SMTP (dev local).
+    from app.config import settings
 
     user = settings.GMAIL_USER
     pwd = settings.GMAIL_APP_PASSWORD
     if not user or not pwd:
         logger.error(
-            "🔐 [auth] GMAIL_USER/GMAIL_APP_PASSWORD lipsesc — email NU s-a trimis"
+            "🔐 [auth] Nicio metodă de trimitere email disponibilă "
+            "(RESEND_API_KEY și GMAIL_* sunt goale)"
         )
         return
 
-    msg = MIMEText(
-        f"Codul tău de resetare parolă GTune AI este:\n\n"
-        f"  {code}\n\n"
-        f"Codul este valabil {_OTP_VALID_MINUTES} minute.\n"
-        f"Dacă nu ai cerut resetarea parolei, ignoră acest mesaj.",
-        "plain",
-        "utf-8",
-    )
-    msg["Subject"] = f"GTune AI — Cod resetare parolă: {code}"
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
     msg["From"] = user
     msg["To"] = to_email
 
