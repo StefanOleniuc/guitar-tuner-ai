@@ -26,6 +26,12 @@ class ActivePage extends ChangeNotifier {
   // oricum (`_index != tunerIndex`).
   bool _barAllowed = false;
 
+  // `false` cât timp `TunerScreen._bootstrap()` nu a terminat verificarea
+  // permisiunii. Cât e `false`, swipe-ul între taburi e blocat — altfel
+  // userul poate glisa pe Metronom SAU Cont în timp ce ecranul de cerere
+  // acces microfon e vizibil (dialog de sistem sau full-screen-ul nostru).
+  bool _bootstrapDone = false;
+
   int get index => _index;
   bool get shellInForeground => _shellInForeground;
 
@@ -37,6 +43,11 @@ class ActivePage extends ChangeNotifier {
   /// un ecran ocupă full-screen-ul (ex: ecranul de cerere acces microfon)
   /// — userul are nevoie să vadă conținutul nedistras pe tot ecranul.
   bool get barAllowed => _barAllowed;
+
+  /// `true` după ce `TunerScreen._bootstrap()` a terminat verificarea
+  /// permisiunii (indiferent dacă a fost acordată sau nu). Folosit de
+  /// `MainShell` pentru a activa swipe-ul între taburi.
+  bool get bootstrapDone => _bootstrapDone;
 
   void setIndex(int v) {
     if (_index == v) return;
@@ -53,6 +64,12 @@ class ActivePage extends ChangeNotifier {
   void setBarAllowed(bool v) {
     if (_barAllowed == v) return;
     _barAllowed = v;
+    notifyListeners();
+  }
+
+  void markBootstrapDone() {
+    if (_bootstrapDone) return;
+    _bootstrapDone = true;
     notifyListeners();
   }
 

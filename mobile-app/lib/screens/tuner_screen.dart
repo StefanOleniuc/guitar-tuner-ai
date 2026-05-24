@@ -234,6 +234,7 @@ class _TunerScreenState extends State<TunerScreen>
       _permissionChecked = true;
       _permissionDenied = !granted;
     });
+    ActivePage.instance.markBootstrapDone();
     ActivePage.instance.setBarAllowed(granted);
     if (!granted) return;
     _startListening();

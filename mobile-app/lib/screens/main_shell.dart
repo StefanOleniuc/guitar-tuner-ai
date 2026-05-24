@@ -105,17 +105,28 @@ class _MainShellState extends State<MainShell> with RouteAware {
           // Fundal unitar — radiele se văd continuu, fără cusături la swipe.
           const AppBackground(),
           AnimatedBuilder(
-            animation: AuthService.instance,
+            animation: Listenable.merge([
+              AuthService.instance,
+              ActivePage.instance,
+            ]),
             builder: (context, _) {
               final authed = AuthService.instance.isAuthenticated;
               // Tab-ul „Cont" e MEREU prezent ca a 3-a pagină — își
               // schimbă doar conținutul în funcție de auth (form sign-up
               // dacă nu, profil cu statistici dacă da). Așa swipe-ul
               // funcționează consistent în ambele stări.
+              //
+              // Swipe-ul e blocat cât `_bootstrapDone == false` (adică
+              // exact cât ecranul de aprobare microfon e vizibil) ca
+              // userul să nu poată glisa pe Metronom / Cont înainte să
+              // răspundă la cererea de permisiune.
+              final swipeEnabled = ActivePage.instance.bootstrapDone;
               return PageView(
                 controller: _controller,
                 onPageChanged: _onPageChanged,
-                physics: const PageScrollPhysics(),
+                physics: swipeEnabled
+                    ? const PageScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
                 children: [
                   const TunerScreen(),
                   const MetronomeScreen(),
