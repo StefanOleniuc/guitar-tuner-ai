@@ -9,13 +9,12 @@ import re
 import secrets
 import smtplib
 import socket
-import urllib.error
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 
 import dns.exception
 import dns.resolver
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel, Field
 
@@ -199,51 +198,62 @@ _OTP_VALID_MINUTES = 15
 
 
 def _send_via_resend(to_email: str, subject: str, body: str) -> bool:
-    """Trimite email prin Resend HTTPS API.
+    """Trimite email prin Resend HTTPS API (folosește httpx).
 
-    Returnează True la succes, False la eșec. NU aruncă excepții —
-    apelantul decide dacă rulează fallback (SMTP).
+    Folosim httpx în loc de urllib fiindcă:
+      • urllib are User-Agent default ("Python-urllib/3.x") blocat de
+        Cloudflare cu eroare 1010 „browser signature banned";
+      • urllib face TLS handshake minimal pe care Cloudflare poate să-l
+        fingerprintăm și să-l respingă;
+      • httpx folosește httpcore + h11 + TLS modern (compatibil Cloudflare).
+
+    Returnează True la succes, False la eșec. NU aruncă excepții.
     """
     from app.config import settings
 
     if not settings.RESEND_API_KEY:
+        logger.warning("🔐 [auth] RESEND_API_KEY lipsește — sar peste Resend")
         return False
 
-    payload = json.dumps(
-        {
-            "from": settings.RESEND_FROM,
-            "to": [to_email],
-            "subject": subject,
-            "text": body,
-        }
-    ).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-            "Content-Type": "application/json",
-            # Cloudflare (în fața Resend API) blochează default User-Agent-ul
-            # urllib ("Python-urllib/3.x") cu eroare 1010. Trimitem unul „normal".
-            "User-Agent": "GTuneAI-Backend/1.0 (+https://guitar-tuner-ai.up.railway.app)",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
+    payload = {
+        "from": settings.RESEND_FROM,
+        "to": [to_email],
+        "subject": subject,
+        "text": body,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+        "Content-Type": "application/json",
+        "User-Agent": "GTuneAI-Backend/1.0",
+        "Accept": "application/json",
+    }
+
     try:
-        logger.info("🔐 [auth] Resend: trimit email către %s…", to_email)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if 200 <= resp.status < 300:
-                logger.info("🔐 [auth] Resend: email trimis OK (status %d)", resp.status)
-                return True
-            logger.error("🔐 [auth] Resend: răspuns neașteptat %d", resp.status)
-            return False
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        logger.error("🔐 [auth] Resend HTTP %d: %s", exc.code, body)
+        logger.info("🔐 [auth] Resend: POST /emails către %s…", to_email)
+        with httpx.Client(timeout=15.0, http2=False) as client:
+            resp = client.post(
+                "https://api.resend.com/emails",
+                json=payload,
+                headers=headers,
+            )
+        if 200 <= resp.status_code < 300:
+            logger.info(
+                "🔐 [auth] Resend OK (status %d): %s",
+                resp.status_code,
+                resp.text[:200],
+            )
+            return True
+        logger.error(
+            "🔐 [auth] Resend HTTP %d: %s",
+            resp.status_code,
+            resp.text[:500],
+        )
+        return False
+    except httpx.TimeoutException as exc:
+        logger.error("🔐 [auth] Resend timeout: %s", exc)
         return False
     except Exception as exc:
-        logger.error("🔐 [auth] Resend a eșuat: %s", exc)
+        logger.error("🔐 [auth] Resend a eșuat: %s: %s", type(exc).__name__, exc)
         return False
 
 
