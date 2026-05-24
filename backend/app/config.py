@@ -9,17 +9,13 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     LOG_LEVEL: str = "DEBUG"
 
-    # Gmail SMTP pentru trimiterea codurilor OTP de resetare parolă
-    # (folosit doar local; în producție Resend e prioritar fiindcă
-    # Railway blochează outbound SMTP).
-    GMAIL_USER: str = ""
-    GMAIL_APP_PASSWORD: str = ""
-
-    # Resend HTTPS API — alternativă la SMTP pentru PaaS-uri care
-    # blochează porturile 25/465/587 (Railway, Heroku, Render etc.).
-    # 100 emailuri/zi gratuit. Vezi https://resend.com.
-    RESEND_API_KEY: str = ""
-    RESEND_FROM: str = "GTune AI <onboarding@resend.dev>"
+    # SendGrid HTTPS API pentru trimiterea codurilor OTP de resetare parolă.
+    # Necesită „Single Sender Verification" — verifici DOAR adresa de la
+    # care trimiți (nu un domeniu), apoi poți trimite către orice destinatar.
+    # 100 emailuri/zi gratuit. Vezi https://sendgrid.com.
+    SENDGRID_API_KEY: str = ""
+    SENDGRID_FROM_EMAIL: str = "gtune.app@gmail.com"
+    SENDGRID_FROM_NAME: str = "GTune AI"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

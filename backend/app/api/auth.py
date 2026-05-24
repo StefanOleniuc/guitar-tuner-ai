@@ -3,14 +3,10 @@
 Email + parolă, token JWT. Stocare în SQLite (vezi auth_db).
 """
 
-import json
 import logging
 import re
 import secrets
-import smtplib
-import socket
 from datetime import datetime, timedelta, timezone
-from email.mime.text import MIMEText
 
 import dns.exception
 import dns.resolver
@@ -197,72 +193,26 @@ _reset_tokens: dict[str, tuple[str, datetime]] = {}
 _OTP_VALID_MINUTES = 15
 
 
-def _send_via_resend(to_email: str, subject: str, body: str) -> bool:
-    """Trimite email prin Resend HTTPS API (folosește httpx).
+def _send_reset_email(to_email: str, code: str) -> None:
+    """Trimite codul OTP prin SendGrid HTTPS API.
 
-    Folosim httpx în loc de urllib fiindcă:
-      • urllib are User-Agent default ("Python-urllib/3.x") blocat de
-        Cloudflare cu eroare 1010 „browser signature banned";
-      • urllib face TLS handshake minimal pe care Cloudflare poate să-l
-        fingerprintăm și să-l respingă;
-      • httpx folosește httpcore + h11 + TLS modern (compatibil Cloudflare).
+    Folosim SendGrid fiindcă:
+      • Railway (și alte PaaS) blochează outbound SMTP — SMTP nu e o opțiune;
+      • SendGrid permite „Single Sender Verification" (verifici doar o
+        adresă de email, nu un domeniu întreg) — ideal pentru proiecte mici;
+      • 100 emailuri/zi gratuit, suficient pentru demo și utilizare moderată.
 
-    Returnează True la succes, False la eșec. NU aruncă excepții.
+    Funcția NU aruncă excepții la eșec (doar loghează) — codul OTP rămâne
+    valid în memorie, dar utilizatorul nu îl va primi pe email.
     """
     from app.config import settings
 
-    if not settings.RESEND_API_KEY:
-        logger.warning("🔐 [auth] RESEND_API_KEY lipsește — sar peste Resend")
-        return False
-
-    payload = {
-        "from": settings.RESEND_FROM,
-        "to": [to_email],
-        "subject": subject,
-        "text": body,
-    }
-    headers = {
-        "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-        "Content-Type": "application/json",
-        "User-Agent": "GTuneAI-Backend/1.0",
-        "Accept": "application/json",
-    }
-
-    try:
-        logger.info("🔐 [auth] Resend: POST /emails către %s…", to_email)
-        with httpx.Client(timeout=15.0, http2=False) as client:
-            resp = client.post(
-                "https://api.resend.com/emails",
-                json=payload,
-                headers=headers,
-            )
-        if 200 <= resp.status_code < 300:
-            logger.info(
-                "🔐 [auth] Resend OK (status %d): %s",
-                resp.status_code,
-                resp.text[:200],
-            )
-            return True
+    if not settings.SENDGRID_API_KEY:
         logger.error(
-            "🔐 [auth] Resend HTTP %d: %s",
-            resp.status_code,
-            resp.text[:500],
+            "🔐 [auth] SENDGRID_API_KEY lipsește — emailul de resetare NU s-a trimis"
         )
-        return False
-    except httpx.TimeoutException as exc:
-        logger.error("🔐 [auth] Resend timeout: %s", exc)
-        return False
-    except Exception as exc:
-        logger.error("🔐 [auth] Resend a eșuat: %s: %s", type(exc).__name__, exc)
-        return False
+        return
 
-
-def _send_reset_email(to_email: str, code: str) -> None:
-    """Trimite codul OTP. Prioritate: Resend (HTTPS) → SMTP Gmail (fallback).
-
-    Pe Railway/PaaS porturile SMTP sunt blocate → doar Resend funcționează.
-    Local, dacă nu ai cheie Resend, se folosește SMTP direct.
-    """
     subject = f"GTune AI — Cod resetare parolă: {code}"
     body = (
         f"Codul tău de resetare parolă GTune AI este:\n\n"
@@ -271,70 +221,47 @@ def _send_reset_email(to_email: str, code: str) -> None:
         f"Dacă nu ai cerut resetarea parolei, ignoră acest mesaj."
     )
 
-    # 1) Încercăm Resend (merge și pe Railway).
-    if _send_via_resend(to_email, subject, body):
-        return
+    payload = {
+        "personalizations": [{"to": [{"email": to_email}]}],
+        "from": {
+            "email": settings.SENDGRID_FROM_EMAIL,
+            "name": settings.SENDGRID_FROM_NAME,
+        },
+        "subject": subject,
+        "content": [{"type": "text/plain", "value": body}],
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.SENDGRID_API_KEY}",
+        "Content-Type": "application/json",
+    }
 
-    # 2) Fallback SMTP — doar dacă avem credentiale Gmail și suntem
-    #    pe o platformă care permite outbound SMTP (dev local).
-    from app.config import settings
-
-    user = settings.GMAIL_USER
-    pwd = settings.GMAIL_APP_PASSWORD
-    if not user or not pwd:
-        logger.error(
-            "🔐 [auth] Nicio metodă de trimitere email disponibilă "
-            "(RESEND_API_KEY și GMAIL_* sunt goale)"
-        )
-        return
-
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = user
-    msg["To"] = to_email
-
-    last_exc: Exception | None = None
-    # Pe Railway, getaddrinfo() returnează adesea întâi IPv6 pentru
-    # smtp.gmail.com, dar containerul nu are conectivitate IPv6 →
-    # "Network is unreachable" (Errno 101). Forțăm IPv4 doar pe durata
-    # acestei funcții (monkey-patch scoped).
-    _orig_getaddrinfo = socket.getaddrinfo
-
-    def _v4_only(host, port, *args, **kwargs):
-        return _orig_getaddrinfo(host, port, socket.AF_INET, *args[1:], **kwargs)
-
-    socket.getaddrinfo = _v4_only
     try:
-        # Încercăm 587 (STARTTLS) întâi — cel mai des permis pe PaaS.
-        try:
-            logger.info("🔐 [auth] SMTP: conect la smtp.gmail.com:587 (STARTTLS, IPv4)…")
-            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as smtp:
-                smtp.ehlo()
-                smtp.starttls()
-                smtp.login(user, pwd)
-                smtp.send_message(msg)
-            logger.info("🔐 [auth] SMTP: email trimis OK către %s (587)", to_email)
-            return
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("🔐 [auth] SMTP 587 a eșuat: %s — încerc 465", exc)
-
-        # Fallback: SMTP_SSL pe 465.
-        try:
-            logger.info("🔐 [auth] SMTP: conect la smtp.gmail.com:465 (SSL, IPv4)…")
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as smtp:
-                smtp.login(user, pwd)
-                smtp.send_message(msg)
-            logger.info("🔐 [auth] SMTP: email trimis OK către %s (465)", to_email)
-        except Exception as exc:
-            logger.error(
-                "🔐 [auth] SMTP a eșuat pe ambele porturi (587: %s, 465: %s)",
-                last_exc,
-                exc,
+        logger.info("🔐 [auth] SendGrid: POST /mail/send către %s…", to_email)
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(
+                "https://api.sendgrid.com/v3/mail/send",
+                json=payload,
+                headers=headers,
             )
-            raise
-    finally:
-        socket.getaddrinfo = _orig_getaddrinfo
+        # SendGrid returnează 202 Accepted la succes (body gol).
+        if 200 <= resp.status_code < 300:
+            logger.info(
+                "🔐 [auth] SendGrid OK (status %d) — email trimis către %s",
+                resp.status_code,
+                to_email,
+            )
+            return
+        logger.error(
+            "🔐 [auth] SendGrid HTTP %d: %s",
+            resp.status_code,
+            resp.text[:500],
+        )
+    except httpx.TimeoutException as exc:
+        logger.error("🔐 [auth] SendGrid timeout: %s", exc)
+    except Exception as exc:
+        logger.error(
+            "🔐 [auth] SendGrid a eșuat: %s: %s", type(exc).__name__, exc
+        )
 
 
 @router.post("/reset-password")
@@ -344,8 +271,8 @@ def reset_password(
     """Pasul 1: generează OTP și îl trimite pe email.
 
     Răspuns mereu generic — nu dezvăluim dacă adresa există în baza de date.
-    Trimiterea email-ului rulează în background (SMTP poate dura 5–10s pe
-    Railway), altfel clientul dă timeout și userul vede „serverul nu răspunde”.
+    Trimiterea email-ului rulează în background (apelul HTTP către SendGrid
+    poate dura 1–3s), altfel clientul dă timeout și userul vede „serverul nu răspunde”.
     """
     email = req.email.strip().lower()
     row = auth_db.get_user_by_email(email)
