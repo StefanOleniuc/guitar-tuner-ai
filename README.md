@@ -28,18 +28,28 @@ Flutter/Dart · FastAPI/Python 3.11 · TensorFlow (CREPE) · PostgreSQL · Docke
 Railway · JWT (HS256) · bcrypt
 
 ## Cerințe
-- Flutter SDK (canal *stable*, Dart ≥ 3.11) + Android SDK sau dispozitiv Android
-- Python 3.11 — doar pentru rularea locală a backendului
+- **Git**
+- **Flutter SDK** (canal *stable*, Dart ≥ 3.11) + Android SDK sau un dispozitiv Android
+- **Python 3.11** — doar pentru rularea locală a backendului
 
 ---
 
-## Rulare — aplicația mobilă (Flutter)
-Aplicația se conectează la backendul desfășurat în cloud (Railway), deci nu necesită
-nicio configurare a serverului.
+## Instalare și rulare
+
+### 1. Clonează repository-ul
+```powershell
+git clone https://github.com/StefanOleniuc/guitar-tuner-ai.git
+cd guitar-tuner-ai
+```
+
+### 2. Aplicația mobilă (Flutter)
+Se conectează automat la backendul desfășurat în cloud (Railway) — nu necesită
+configurarea unui server.
 ```powershell
 cd mobile-app
 flutter pub get
-flutter run --release        # pe un dispozitiv/emulator Android
+flutter doctor               # (optional) verifica instalarea Flutter/Android
+flutter run --release        # pe un dispozitiv/emulator Android conectat
 ```
 Generarea pachetului de instalare (APK):
 ```powershell
@@ -47,9 +57,8 @@ flutter build apk --release
 # rezultat: build/app/outputs/flutter-apk/app-release.apk
 ```
 
-## Rulare — backend (FastAPI + CREPE)
-Backendul este deja desfășurat în cloud pe **Railway** (împachetat Docker) și este
-folosit automat de aplicație. Pentru rularea locală, în scop de dezvoltare:
+### 3. Backend (opțional — este deja desfășurat pe Railway)
+Pentru rularea locală, în scop de dezvoltare:
 ```powershell
 cd backend
 python -m venv venv
@@ -68,6 +77,10 @@ cd mobile-app  ; flutter test    # 28 teste (conversii, One Euro Filter)
 ```
 
 ## Livrabile
-- **Cod sursă complet al aplicației** — acest repository, fără binare compilate.
-- **Documentația** (lucrarea de diplomă) — depusă separat la facultate.
-- **Backend live:** https://guitar-tuner-ai.up.railway.app
+- **Aplicația mobilă** (Flutter/Dart) — `mobile-app/`
+- **Backendul** (FastAPI/Python + model CREPE), desfășurat pe Railway — `backend/`
+- **Suita de teste automate** (49 de teste) — `mobile-app/test/`, `backend/tests/`
+
+Codul sursă complet se află în acest repository, fără fișiere binare compilate.
+Backend live: https://guitar-tuner-ai.up.railway.app
+Documentația (lucrarea de diplomă) se depune separat la facultate.
