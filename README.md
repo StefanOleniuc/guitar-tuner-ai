@@ -29,8 +29,10 @@ Railway · JWT (HS256) · bcrypt
 
 ## Cerințe
 - **Git**
-- **Flutter SDK** (canal *stable*, Dart ≥ 3.11) + Android SDK sau un dispozitiv Android
-- **Python 3.11** — doar pentru rularea locală a backendului
+- **Flutter SDK** (canal *stable*, Dart ≥ 3.11) și mediul de dezvoltare Android
+  (Android Studio / Android SDK) — ghid oficial de instalare:
+  https://docs.flutter.dev/get-started/install
+- **Python 3.11** — necesar doar pentru rularea locală a backendului
 
 ---
 
@@ -48,7 +50,6 @@ configurarea unui server.
 ```powershell
 cd mobile-app
 flutter pub get
-flutter doctor               # (optional) verifica instalarea Flutter/Android
 flutter run --release        # pe un dispozitiv/emulator Android conectat
 ```
 Generarea pachetului de instalare (APK):
@@ -82,5 +83,4 @@ cd mobile-app  ; flutter test    # 28 teste (conversii, One Euro Filter)
 - **Suita de teste automate** (49 de teste) — `mobile-app/test/`, `backend/tests/`
 
 Codul sursă complet se află în acest repository, fără fișiere binare compilate.
-Backend live: https://guitar-tuner-ai.up.railway.app
-Documentația (lucrarea de diplomă) se depune separat la facultate.
+Backendul rulează live la https://guitar-tuner-ai.up.railway.app
