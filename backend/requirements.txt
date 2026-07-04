@@ -20,3 +20,7 @@ bcrypt==4.2.1
 pyjwt==2.10.1
 # Verificarea domeniului de email prin DNS (înregistrări MX)
 dnspython==2.7.0
+
+# Dev / testare
+pytest==9.0.3
+pytest-asyncio==1.4.0

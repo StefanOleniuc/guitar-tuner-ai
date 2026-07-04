@@ -1,6 +1,6 @@
 """Rute de autentificare: înregistrare, login, profil, resetare parolă.
 
-Email + parolă, token JWT. Stocare în SQLite (vezi auth_db).
+Email + parolă, token JWT. Stocare în PostgreSQL (vezi auth_db).
 """
 
 import logging

@@ -52,3 +52,16 @@ backend/data/
 
 # Claude Code local config
 .claude/
+
+# Lucrarea de licenta (sursa LaTeX + PDF) NU se urca pe GitHub public:
+#   1. Antiplagiat: Turnitin / sistemele de similitudine indexeaza GitHub public;
+#      un repo public al lucrarii ar produce auto-potrivire (similitudine falsa).
+#   2. Confidentialitate: semnatura olografa, CNP-ul si seria/nr. CI nu devin publice.
+# Lucrarea se depune la facultate; pe GitHub ramane DOAR codul sursa al aplicatiei.
+latex/
+docs/
+
+# Prezentare, materiale demo si documentul intern de context - NU pe git
+presentation/
+demo-video/
+CONTEXT.md
