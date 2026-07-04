@@ -1,17 +1,19 @@
-# guitar_tuner_ai
+# GTune AI — aplicația mobilă (Flutter)
 
-A new Flutter project.
+Client mobil al acordorului hibrid **GTune AI**. Rulează algoritmul **YIN** local
+(detecție de pitch offline, în timp real) și comunică cu backendul FastAPI pentru
+verificarea de înaltă acuratețe cu modelul **CREPE** (modul *AI Precision*).
 
-## Getting Started
+## Structura
+- `lib/services/` — captură audio, YIN (`PitchService`), client API, metronom, autentificare
+- `lib/screens/` — ecranele Acordor, Metronom, Cont
+- `lib/models/`, `lib/utils/` — modele de date și utilitare (ex. `OneEuroFilter`)
+- `test/` — teste unitare (`flutter test`)
 
-This project is a starting point for a Flutter application.
+## Rulare
+```powershell
+flutter pub get
+flutter run --release        # se conecteaza la backendul din cloud (Railway)
+```
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Vezi și [README-ul principal](../README.md) al proiectului.
