@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("[main] Inițializare CrepeService...")
     app.state.crepe_service = CrepeService()
     logger.info(
-        "[main] 🎸 Guitar Tuner AI Backend pornit — ENV=%s, AI + Auth ready",
+        "[main] Guitar Tuner AI Backend pornit — ENV=%s, AI + Auth ready",
         settings.ENV,
     )
     yield

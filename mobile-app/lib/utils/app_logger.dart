@@ -1,4 +1,4 @@
-// ═══════════════════════════════════════════════════════════════
+//
 // AppLogger - Logging in consola pentru dezvoltare
 //
 // Format output: [APP_LOG] [LEVEL] HH:mm:ss.SSS - mesaj
@@ -9,7 +9,7 @@
 //   AppLogger.d('mesaj debug');
 //   AppLogger.w('mesaj warning');
 //   AppLogger.e('eroare', error: e, stackTrace: st);
-// ═══════════════════════════════════════════════════════════════
+//
 
 import 'package:flutter/foundation.dart';
 

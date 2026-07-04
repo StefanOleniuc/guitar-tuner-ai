@@ -60,12 +60,12 @@ class AuthService extends ChangeNotifier {
       final cached = prefs.getString(_kUser);
       if (_token == null || cached == null) return;
       _user = AuthUser.fromJson(jsonDecode(cached) as Map<String, dynamic>);
-      AppLogger.i('🔐 [Auth] Sesiune restaurată: ${_user!.email}');
+      AppLogger.i('[Auth] Sesiune restaurată: ${_user!.email}');
       notifyListeners();
       // Validare în fundal — nu blocăm pornirea.
       unawaited(_validateToken());
     } catch (e) {
-      AppLogger.e('❌ [Auth] Eroare la încărcarea sesiunii', error: e);
+      AppLogger.e('[Auth] Eroare la încărcarea sesiunii', error: e);
     }
   }
 
@@ -84,7 +84,7 @@ class AuthService extends ChangeNotifier {
         // Token încă valid → tragem preferințele + istoricul din cloud.
         unawaited(UserDataService.instance.onLoginSuccess());
       } else if (res.statusCode == 401) {
-        AppLogger.w('🔶 [Auth] Token expirat — delogare');
+        AppLogger.w('[Auth] Token expirat — delogare');
         await logout();
       }
     } catch (_) {
@@ -126,7 +126,7 @@ class AuthService extends ChangeNotifier {
         _token = json['token'] as String;
         _user = AuthUser.fromJson(json['user'] as Map<String, dynamic>);
         await _persist();
-        AppLogger.i('🔐 [Auth] Autentificat: ${_user!.email}');
+        AppLogger.i('[Auth] Autentificat: ${_user!.email}');
         notifyListeners();
         // Așteptăm sync-ul preferințelor + istoricului ÎNAINTE să închidem
         // ecranul de auth — așa userul vede deja instrumentul + A4 lui
@@ -142,7 +142,7 @@ class AuthService extends ChangeNotifier {
     } on SocketException {
       return 'Fără conexiune la internet. Încearcă din nou.';
     } catch (e) {
-      AppLogger.e('❌ [Auth] Eroare neașteptată', error: e);
+      AppLogger.e('[Auth] Eroare neașteptată', error: e);
       return 'A apărut o eroare neașteptată.';
     }
   }
@@ -226,13 +226,13 @@ class AuthService extends ChangeNotifier {
     } on SocketException {
       return 'Fără conexiune la internet.';
     } catch (e) {
-      AppLogger.e('❌ [Auth] Eroare la update profil', error: e);
+      AppLogger.e('[Auth] Eroare la update profil', error: e);
       return 'A apărut o eroare neașteptată.';
     }
   }
 
   Future<void> logout() async {
-    AppLogger.i('🔐 [Auth] Delogare');
+    AppLogger.i('[Auth] Delogare');
     _token = null;
     _user = null;
     final prefs = await SharedPreferences.getInstance();

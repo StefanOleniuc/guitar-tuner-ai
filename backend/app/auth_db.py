@@ -94,10 +94,10 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_tuning_sessions_user_created "
             "ON tuning_sessions (user_id, created_at DESC)"
         )
-    logger.info("🔐 [auth_db] Schema PostgreSQL pregătită")
+    logger.info("[auth_db] Schema PostgreSQL pregătită")
 
 
-# ─── Conturi ─────────────────────────────────────────────────────────
+# Conturi
 
 
 def create_user(email: str, password_hash: str, display_name: str | None) -> int:
@@ -152,7 +152,7 @@ def update_password_hash(email: str, password_hash: str) -> None:
         )
 
 
-# ─── Preferințe utilizator (instrument preferat + calibrare A4) ──────
+# Preferințe utilizator (instrument preferat + calibrare A4)
 
 
 def get_preferences(user_id: int) -> dict | None:
@@ -193,7 +193,7 @@ def set_preferences(
         )
 
 
-# ─── Istoric sesiuni de acordaj ──────────────────────────────────────
+# Istoric sesiuni de acordaj
 
 
 def add_tuning_session(

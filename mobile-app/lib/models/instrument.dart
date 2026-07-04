@@ -30,7 +30,7 @@ class Instrument {
   /// Numărul de corzi (note distincte) — derivat din primul acordaj.
   int get stringCount => tunings.first.notes.length;
 
-  // ─── Chitară ────────────────────────────────────────────────────
+  // Chitară
   static const guitar = Instrument(
     id: 'guitar',
     name: 'Chitară',
@@ -43,7 +43,7 @@ class Instrument {
     ],
   );
 
-  // ─── Chitară bass (4 corzi) ─────────────────────────────────────
+  // Chitară bass (4 corzi)
   static const bass = Instrument(
     id: 'bass',
     name: 'Chitară bass',
@@ -54,7 +54,7 @@ class Instrument {
     ],
   );
 
-  // ─── Vioară ─────────────────────────────────────────────────────
+  // Vioară
   static const violin = Instrument(
     id: 'violin',
     name: 'Vioară',
@@ -64,7 +64,7 @@ class Instrument {
     ],
   );
 
-  // ─── Ukulele (acordaj C, reentrant) ─────────────────────────────
+  // Ukulele (acordaj C, reentrant)
   static const ukulele = Instrument(
     id: 'ukulele',
     name: 'Ukulele',
@@ -74,7 +74,7 @@ class Instrument {
     ],
   );
 
-  // ─── Mandolină (4 cursuri) ──────────────────────────────────────
+  // Mandolină (4 cursuri)
   static const mandolin = Instrument(
     id: 'mandolin',
     name: 'Mandolină',

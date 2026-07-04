@@ -50,9 +50,6 @@ backend/server_logs/
 backend/data/
 *.db
 
-# Claude Code local config
-.claude/
-
 # Lucrarea de licenta (sursa LaTeX + PDF) NU se urca pe GitHub public:
 #   1. Antiplagiat: Turnitin / sistemele de similitudine indexeaza GitHub public;
 #      un repo public al lucrarii ar produce auto-potrivire (similitudine falsa).

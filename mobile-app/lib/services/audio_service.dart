@@ -16,19 +16,19 @@ class AudioService {
 
   Future<bool> hasPermission() async {
     final status = await Permission.microphone.status;
-    AppLogger.i('🎤 [AudioService] Permission status: $status');
+    AppLogger.i('[AudioService] Permission status: $status');
     return status.isGranted;
   }
 
   Future<bool> requestPermission() async {
     final status = await Permission.microphone.request();
-    AppLogger.i('🎤 [AudioService] Permission request result: $status');
+    AppLogger.i('[AudioService] Permission request result: $status');
     return status.isGranted;
   }
 
   /// Deschide setările de sistem — singura cale după un refuz permanent.
   Future<void> openSystemSettings() async {
-    AppLogger.i('🎤 [AudioService] Deschid setările de sistem');
+    AppLogger.i('[AudioService] Deschid setările de sistem');
     await openAppSettings();
   }
 
@@ -38,7 +38,7 @@ class AudioService {
     }
 
     try {
-      AppLogger.i('🎤 [AudioService] Pornire captură audio...');
+      AppLogger.i('[AudioService] Pornire captură audio...');
 
       // 16kHz mono PCM16 — format optim pentru pitch detection.
       const config = RecordConfig(
@@ -52,9 +52,9 @@ class AudioService {
       _audioStream = source.asBroadcastStream();
       _isRecording = true;
 
-      AppLogger.i('🎤 [AudioService] Captură pornită — 16kHz, mono, PCM16');
+      AppLogger.i('[AudioService] Captură pornită — 16kHz, mono, PCM16');
     } catch (e) {
-      AppLogger.e('❌ [AudioService] Eroare la pornirea capturii', error: e);
+      AppLogger.e('[AudioService] Eroare la pornirea capturii', error: e);
       _isRecording = false;
       rethrow;
     }
@@ -62,13 +62,13 @@ class AudioService {
 
   Future<void> stopRecording() async {
     try {
-      AppLogger.i('⏹️ [AudioService] Oprire captură audio...');
+      AppLogger.i('[AudioService] Oprire captură audio...');
       await _recorder.stop();
       _audioStream = null;
       _isRecording = false;
-      AppLogger.i('⏹️ [AudioService] Captură oprită');
+      AppLogger.i('[AudioService] Captură oprită');
     } catch (e) {
-      AppLogger.e('❌ [AudioService] Eroare la oprirea capturii', error: e);
+      AppLogger.e('[AudioService] Eroare la oprirea capturii', error: e);
       _isRecording = false;
       rethrow;
     }
@@ -76,6 +76,6 @@ class AudioService {
 
   Future<void> dispose() async {
     await _recorder.dispose();
-    AppLogger.d('🔍 [AudioService] Resurse AudioRecorder eliberate');
+    AppLogger.d('[AudioService] Resurse AudioRecorder eliberate');
   }
 }

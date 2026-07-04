@@ -1,8 +1,8 @@
-// ═══════════════════════════════════════════════════════════════
+//
 // Guitar Tuner AI - Aplicatie de tuner pentru chitara cu AI
 // Autor: Oleniuc Stefan
 // Universitatea Politehnica Timisoara - Ingineria Sistemelor
-// ═══════════════════════════════════════════════════════════════
+//
 
 import 'package:flutter/material.dart';
 
@@ -15,7 +15,7 @@ import 'utils/route_observer.dart';
 Future<void> main() async {
   // Necesar înainte de orice plugin (shared_preferences) folosit în main.
   WidgetsFlutterBinding.ensureInitialized();
-  AppLogger.i('🚀 [main] Aplicația Guitar Tuner AI pornește...');
+  AppLogger.i('[main] Aplicația Guitar Tuner AI pornește...');
   // Încărcăm preferințele + sesiunea de autentificare înainte de runApp
   // ca primul cadru să fie deja corect configurat.
   await AppSettings.instance.load();
@@ -28,7 +28,7 @@ class GuitarTunerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    AppLogger.d('🎨 [GuitarTunerApp] Construire aplicație...');
+    AppLogger.d('[GuitarTunerApp] Construire aplicație...');
 
     return MaterialApp(
       title: 'GTune AI - AI Guitar Tuner',

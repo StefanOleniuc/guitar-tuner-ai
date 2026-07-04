@@ -67,16 +67,16 @@ class _MainShellState extends State<MainShell> with RouteAware {
     super.dispose();
   }
 
-  // ─── RouteAware: shell pe fundal / în prim-plan ──────────────────────
+  // RouteAware: shell pe fundal / în prim-plan
   @override
   void didPushNext() {
-    AppLogger.i('🔶 [MainShell] Rută pushed peste shell — pauză taburi');
+    AppLogger.i('[MainShell] Rută pushed peste shell — pauză taburi');
     ActivePage.instance.setShellInForeground(false);
   }
 
   @override
   void didPopNext() {
-    AppLogger.i('🚀 [MainShell] Shell revenit în prim-plan');
+    AppLogger.i('[MainShell] Shell revenit în prim-plan');
     ActivePage.instance.setShellInForeground(true);
   }
 

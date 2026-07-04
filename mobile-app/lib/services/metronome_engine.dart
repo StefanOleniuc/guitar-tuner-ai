@@ -43,9 +43,9 @@ class MetronomeEngine {
         await p.setReleaseMode(ReleaseMode.stop);
       }
       _ready = true;
-      AppLogger.i('🥁 [Metronome] Engine pregătit');
+      AppLogger.i('[Metronome] Engine pregătit');
     } catch (e) {
-      AppLogger.e('❌ [Metronome] Eroare la init audio', error: e);
+      AppLogger.e('[Metronome] Eroare la init audio', error: e);
     }
   }
 
@@ -54,7 +54,7 @@ class MetronomeEngine {
     _running = true;
     _beat = 0;
     _nextBeat = DateTime.now();
-    AppLogger.i('🥁 [Metronome] Start — $bpm BPM, $beatsPerBar/4');
+    AppLogger.i('[Metronome] Start — $bpm BPM, $beatsPerBar/4');
     _fireBeat();
     _armNext();
   }
@@ -64,7 +64,7 @@ class MetronomeEngine {
     _running = false;
     _timer?.cancel();
     _timer = null;
-    AppLogger.i('🥁 [Metronome] Stop');
+    AppLogger.i('[Metronome] Stop');
   }
 
   void _armNext() {
@@ -90,7 +90,7 @@ class MetronomeEngine {
       // Fire-and-forget — nu blochez programarea bătăii.
       unawaited(
         player.play(BytesSource(wav)).catchError((Object e) {
-          AppLogger.w('🔶 [Metronome] play eșuat: $e');
+          AppLogger.w('[Metronome] play eșuat: $e');
         }),
       );
     }

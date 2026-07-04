@@ -18,7 +18,7 @@ class ApiService {
     final uri = Uri.parse(url);
 
     AppLogger.i(
-      '🌐 [ApiService] CREPE request: ${pcm16Bytes.length} bytes → $url',
+      '[ApiService] CREPE request: ${pcm16Bytes.length} bytes → $url',
     );
 
     try {
@@ -38,12 +38,12 @@ class ApiService {
       final response = await http.Response.fromStream(streamed);
       sw.stop();
       AppLogger.i(
-        '⏱️ [ApiService] CREPE latență (round-trip): ${sw.elapsedMilliseconds} ms',
+        '[ApiService] CREPE latență (round-trip): ${sw.elapsedMilliseconds} ms',
       );
 
       if (response.statusCode != 200) {
         AppLogger.e(
-          '❌ [ApiService] CREPE status ${response.statusCode}: ${response.body}',
+          '[ApiService] CREPE status ${response.statusCode}: ${response.body}',
         );
         return null;
       }
@@ -52,22 +52,22 @@ class ApiService {
       final result = CrepePitchResult.fromJson(json);
 
       AppLogger.i(
-        '✅ [ApiService] CREPE response: ${result.frequency.toStringAsFixed(2)} Hz, '
+        '[ApiService] CREPE response: ${result.frequency.toStringAsFixed(2)} Hz, '
         'conf ${(result.confidence * 100).toStringAsFixed(0)}%',
       );
       return result;
     } on TimeoutException catch (e) {
-      AppLogger.e('❌ [ApiService] CREPE timeout', error: e);
+      AppLogger.e('[ApiService] CREPE timeout', error: e);
       return null;
     } on SocketException catch (e) {
-      AppLogger.e('❌ [ApiService] CREPE: nu pot conecta la backend', error: e);
+      AppLogger.e('[ApiService] CREPE: nu pot conecta la backend', error: e);
       return null;
     } on FormatException catch (e) {
-      AppLogger.e('❌ [ApiService] CREPE: răspuns JSON invalid', error: e);
+      AppLogger.e('[ApiService] CREPE: răspuns JSON invalid', error: e);
       return null;
     } catch (e, st) {
       AppLogger.e(
-        '❌ [ApiService] CREPE: eroare neașteptată',
+        '[ApiService] CREPE: eroare neașteptată',
         error: e,
         stackTrace: st,
       );

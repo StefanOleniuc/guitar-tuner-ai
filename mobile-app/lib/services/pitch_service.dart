@@ -65,12 +65,12 @@ class PitchService {
         );
         if (r.pitched) {
           AppLogger.d(
-            '🎸 [PitchService] raw=${r.pitch.toStringAsFixed(1)}Hz '
+            '[PitchService] raw=${r.pitch.toStringAsFixed(1)}Hz '
             'p=${r.probability.toStringAsFixed(2)}',
           );
         }
       } on InvalidAudioBufferException catch (e) {
-        AppLogger.e('❌ [PitchService] Buffer audio invalid', error: e);
+        AppLogger.e('[PitchService] Buffer audio invalid', error: e);
         result = PitchResult.empty();
       }
       // Glisăm cu un hop.

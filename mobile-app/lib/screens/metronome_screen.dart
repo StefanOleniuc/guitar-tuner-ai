@@ -66,7 +66,7 @@ class _MetronomeScreenState extends State<MetronomeScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed && _engine.isRunning) {
-      AppLogger.i('🥁 [Metronome] App în background — opresc click-ul');
+      AppLogger.i('[Metronome] App în background — opresc click-ul');
       setState(() {
         _engine.stop();
         _activeBeat = -1;
@@ -81,7 +81,7 @@ class _MetronomeScreenState extends State<MetronomeScreen>
     final isVisible =
         ActivePage.instance.visibleIndex == ActivePage.metronomeIndex;
     if (!isVisible && _engine.isRunning) {
-      AppLogger.i('🔶 [MetronomeScreen] Tab ascuns — opresc metronomul');
+      AppLogger.i('[MetronomeScreen] Tab ascuns — opresc metronomul');
       setState(() {
         _engine.stop();
         _activeBeat = -1;
@@ -140,7 +140,7 @@ class _MetronomeScreenState extends State<MetronomeScreen>
         final avg = totalMs / (_taps.length - 1);
         if (avg > 0) {
           final bpm = (60000 / avg).round().clamp(_minBpm, _maxBpm);
-          AppLogger.d('🥁 [Metronome] Tap-tempo → $bpm BPM');
+          AppLogger.d('[Metronome] Tap-tempo → $bpm BPM');
           _engine.bpm = bpm;
         }
       }
@@ -199,7 +199,7 @@ class _MetronomeScreenState extends State<MetronomeScreen>
     );
   }
 
-  // ── BPM mare + tempo, flancat de − / + ──────────────────────────
+  // BPM mare + tempo, flancat de − / +
   Widget _buildBpmRow() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -242,7 +242,7 @@ class _MetronomeScreenState extends State<MetronomeScreen>
     );
   }
 
-  // ── Punctele de bătaie (poziția în măsură) ──────────────────────
+  // Punctele de bătaie (poziția în măsură)
   Widget _buildBeatDots() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -270,7 +270,7 @@ class _MetronomeScreenState extends State<MetronomeScreen>
     );
   }
 
-  // ── Butonul Play / Stop — pulsează pe fiecare bătaie ────────────
+  // Butonul Play / Stop — pulsează pe fiecare bătaie
   Widget _buildPlayButton() {
     final running = _engine.isRunning;
     return GestureDetector(
@@ -304,7 +304,7 @@ class _MetronomeScreenState extends State<MetronomeScreen>
     );
   }
 
-  // ── Selector bătăi pe măsură (2..7) ─────────────────────────────
+  // Selector bătăi pe măsură (2..7)
   Widget _buildBeatsSelector() {
     return Column(
       children: [
@@ -357,7 +357,7 @@ class _MetronomeScreenState extends State<MetronomeScreen>
     );
   }
 
-  // ── Tap-tempo ───────────────────────────────────────────────────
+  // Tap-tempo
   Widget _buildTapTempo() {
     return _TapTempoButton(onTap: _tapTempo, recentTaps: _taps.length);
   }

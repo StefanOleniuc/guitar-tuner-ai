@@ -61,13 +61,13 @@ class AppSettings extends ChangeNotifier {
       _leftHanded = prefs.getBool(_kLeftHanded) ?? false;
       _chromaticMode = prefs.getBool(_kChromatic) ?? false;
       AppLogger.i(
-        '⚙️ [AppSettings] Încărcat: instrument=$_instrumentId, '
+        '[AppSettings] Încărcat: instrument=$_instrumentId, '
         'A4=${_a4.toStringAsFixed(0)} Hz, freq=$_showFrequency, '
         'leftHanded=$_leftHanded',
       );
     } catch (e) {
       AppLogger.e(
-        '❌ [AppSettings] Eroare la încărcare — folosesc default',
+        '[AppSettings] Eroare la încărcare — folosesc default',
         error: e,
       );
     }
@@ -77,13 +77,13 @@ class AppSettings extends ChangeNotifier {
   Future<void> setInstrument(String id) async {
     if (_instrumentId == id) return;
     _instrumentId = id;
-    AppLogger.i('⚙️ [AppSettings] Instrument → $id');
+    AppLogger.i('[AppSettings] Instrument → $id');
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kInstrument, id);
     } catch (e) {
-      AppLogger.e('❌ [AppSettings] Nu am putut salva instrumentul', error: e);
+      AppLogger.e('[AppSettings] Nu am putut salva instrumentul', error: e);
     }
     // Dacă userul e logat, sincronizăm preferințele și în cloud — fire-and-forget,
     // nu blocăm UI-ul. Necunoaștere a cont = no-op.
@@ -94,13 +94,13 @@ class AppSettings extends ChangeNotifier {
     final v = value.clamp(minA4, maxA4).toDouble();
     if (v == _a4) return;
     _a4 = v;
-    AppLogger.i('⚙️ [AppSettings] A4 → ${v.toStringAsFixed(0)} Hz');
+    AppLogger.i('[AppSettings] A4 → ${v.toStringAsFixed(0)} Hz');
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble(_kA4, v);
     } catch (e) {
-      AppLogger.e('❌ [AppSettings] Nu am putut salva A4', error: e);
+      AppLogger.e('[AppSettings] Nu am putut salva A4', error: e);
     }
     unawaited(UserDataService.instance.pushPreferencesFromSettings());
   }
@@ -119,7 +119,7 @@ class AppSettings extends ChangeNotifier {
     _instrumentId = Instrument.guitar.id;
     _a4 = defaultA4;
     _leftHanded = false;
-    AppLogger.i('⚙️ [AppSettings] Reset la default (logout)');
+    AppLogger.i('[AppSettings] Reset la default (logout)');
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -127,7 +127,7 @@ class AppSettings extends ChangeNotifier {
       await prefs.setDouble(_kA4, _a4);
       await prefs.setBool(_kLeftHanded, _leftHanded);
     } catch (e) {
-      AppLogger.e('❌ [AppSettings] Nu am putut salva reset-ul', error: e);
+      AppLogger.e('[AppSettings] Nu am putut salva reset-ul', error: e);
     }
     // NU împingem la backend — userul e deja delogat, token-ul e nul.
   }
@@ -140,20 +140,20 @@ class AppSettings extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kWelcomeSeen, true);
     } catch (e) {
-      AppLogger.e('❌ [AppSettings] Nu am putut salva welcomeSeen', error: e);
+      AppLogger.e('[AppSettings] Nu am putut salva welcomeSeen', error: e);
     }
   }
 
   Future<void> setLeftHanded(bool value) async {
     if (_leftHanded == value) return;
     _leftHanded = value;
-    AppLogger.i('⚙️ [AppSettings] Stângaci → $value');
+    AppLogger.i('[AppSettings] Stângaci → $value');
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kLeftHanded, value);
     } catch (e) {
-      AppLogger.e('❌ [AppSettings] Nu am putut salva leftHanded', error: e);
+      AppLogger.e('[AppSettings] Nu am putut salva leftHanded', error: e);
     }
     unawaited(UserDataService.instance.pushPreferencesFromSettings());
   }
@@ -161,26 +161,26 @@ class AppSettings extends ChangeNotifier {
   Future<void> setChromaticMode(bool value) async {
     if (_chromaticMode == value) return;
     _chromaticMode = value;
-    AppLogger.i('⚙️ [AppSettings] Mod cromatic → $value');
+    AppLogger.i('[AppSettings] Mod cromatic → $value');
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kChromatic, value);
     } catch (e) {
-      AppLogger.e('❌ [AppSettings] Nu am putut salva cromaticMode', error: e);
+      AppLogger.e('[AppSettings] Nu am putut salva cromaticMode', error: e);
     }
   }
 
   Future<void> setShowFrequency(bool value) async {
     if (_showFrequency == value) return;
     _showFrequency = value;
-    AppLogger.i('⚙️ [AppSettings] Afișare frecvență → $value');
+    AppLogger.i('[AppSettings] Afișare frecvență → $value');
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kShowFrequency, value);
     } catch (e) {
-      AppLogger.e('❌ [AppSettings] Nu am putut salva showFrequency', error: e);
+      AppLogger.e('[AppSettings] Nu am putut salva showFrequency', error: e);
     }
   }
 }

@@ -138,7 +138,7 @@ class _TunerScreenState extends State<TunerScreen>
   int _pendingCount = 0;
   StreamSubscription<Uint8List>? _audioSubscription;
 
-  // ─── AI Precision (CREPE) ─────────────────────────────────────────
+  // AI Precision (CREPE)
   // CREPE rulează pe server (round-trip ~1s) — NU conduce acul în timp
   // real. YIN e master; CREPE = readout separat + fallback când YIN e mut.
   bool _aiPrecisionEnabled = false;
@@ -255,7 +255,7 @@ class _TunerScreenState extends State<TunerScreen>
     super.dispose();
   }
 
-  // ─── Vizibilitate: microfonul rulează DOAR cât tabul Acordor e vizibil ──
+  // Vizibilitate: microfonul rulează DOAR cât tabul Acordor e vizibil
   //
   // `ActivePage` ne spune ce tab e vizibil userului. Când swipe-ăm spre
   // Metronom sau când se deschide o rută peste shell (Setări / Auth),
@@ -267,10 +267,10 @@ class _TunerScreenState extends State<TunerScreen>
     if (!_permissionChecked || _permissionDenied) return;
     final isVisible = ActivePage.instance.visibleIndex == ActivePage.tunerIndex;
     if (isVisible && !_listening) {
-      AppLogger.i('🚀 [TunerScreen] Tab Acordor vizibil — pornesc microfonul');
+      AppLogger.i('[TunerScreen] Tab Acordor vizibil — pornesc microfonul');
       _startListening();
     } else if (!isVisible && _listening) {
-      AppLogger.i('🔶 [TunerScreen] Tab Acordor ascuns — opresc microfonul');
+      AppLogger.i('[TunerScreen] Tab Acordor ascuns — opresc microfonul');
       _stopListening();
     }
   }
@@ -282,7 +282,7 @@ class _TunerScreenState extends State<TunerScreen>
     final instTunings = AppSettings.instance.instrument.tunings;
     if (!instTunings.contains(_tuning)) {
       // Instrumentul s-a schimbat → acordajul vechi nu mai e valid
-      AppLogger.i('🎸 [TunerScreen] Instrument nou — resetez acordajul');
+      AppLogger.i('[TunerScreen] Instrument nou — resetez acordajul');
       setState(() {
         _tuning = instTunings.first;
         _lockedString = null;
@@ -302,7 +302,7 @@ class _TunerScreenState extends State<TunerScreen>
   /// și `ActivePage.visibleIndex` devine null → `_onActivePageChanged`
   /// oprește captura. La închiderea Setărilor, captura repornește.
   void _openSettings() {
-    AppLogger.i('⚙️ [TunerScreen] Deschid Setări');
+    AppLogger.i('[TunerScreen] Deschid Setări');
     Navigator.of(
       context,
     ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
@@ -403,7 +403,7 @@ class _TunerScreenState extends State<TunerScreen>
     // NU afișăm frame-ul și nu-l băgăm în istoric.
     if (!_pitchService.isPlausibleForTuning(folded, notes, maxCents: 200)) {
       AppLogger.d(
-        '🔍 [Tuner] frame implauzibil ignorat: '
+        '[Tuner] frame implauzibil ignorat: '
         '${folded.toStringAsFixed(1)}Hz (raw ${frequency.toStringAsFixed(1)})',
       );
       return;
@@ -422,7 +422,7 @@ class _TunerScreenState extends State<TunerScreen>
           if (_pendingCount < 3) {
             _pendingFreq = folded;
             AppLogger.d(
-              '🔍 [Tuner] outlier în așteptare ($_pendingCount/3): '
+              '[Tuner] outlier în așteptare ($_pendingCount/3): '
               '${folded.toStringAsFixed(1)}Hz (ref ${ref.toStringAsFixed(1)})',
             );
             return;
@@ -439,7 +439,7 @@ class _TunerScreenState extends State<TunerScreen>
           _pendingFreq = folded; // primul cadru ciudat (sau nepotrivit) → reset
           _pendingCount = 1;
           AppLogger.d(
-            '🔍 [Tuner] outlier respins: '
+            '[Tuner] outlier respins: '
             '${folded.toStringAsFixed(1)}Hz (ref ${ref.toStringAsFixed(1)})',
           );
           return; // NU actualizăm afișajul → fără sărituri haotice
@@ -465,7 +465,7 @@ class _TunerScreenState extends State<TunerScreen>
     );
     final n = _pitchService.nearestNoteInTuning(smoothFreq, notes);
     AppLogger.d(
-      '✅ [Tuner] raw_med=${medianFreq.toStringAsFixed(1)} '
+      '[Tuner] raw_med=${medianFreq.toStringAsFixed(1)} '
       'smooth=${smoothFreq.toStringAsFixed(1)}Hz '
       '→ ${n.note} ${n.cents.toStringAsFixed(0)}c',
     );
@@ -516,7 +516,7 @@ class _TunerScreenState extends State<TunerScreen>
       if (_yinRecoveryCount < _kYinRecoveryFrames) return;
       _aiDriving = false;
       _yinRecoveryCount = 0;
-      AppLogger.i('🎸 [Tuner] YIN stabil — preia acul înapoi de la CREPE');
+      AppLogger.i('[Tuner] YIN stabil — preia acul înapoi de la CREPE');
     }
 
     setState(() {
@@ -599,14 +599,14 @@ class _TunerScreenState extends State<TunerScreen>
       if (mounted) setState(() => _justTuned.remove(note));
     });
     AppLogger.i(
-      '✅ [TunerScreen] Coardă acordată: $note '
+      '[TunerScreen] Coardă acordată: $note '
       '(${_tunedStrings.length}/${_tuning.notes.length})',
     );
   }
 
   void _playAllTuned() {
     HapticFeedback.heavyImpact();
-    AppLogger.i('🎸 [TunerScreen] Toate corzile acordate!');
+    AppLogger.i('[TunerScreen] Toate corzile acordate!');
   }
 
   void _restartInactivityTimer() {
@@ -614,7 +614,7 @@ class _TunerScreenState extends State<TunerScreen>
     _inactivityTimer = Timer(_inactivityReset, () {
       if (!mounted) return;
       if (_tunedStrings.isNotEmpty || _hasSignal) {
-        AppLogger.w('🔶 [TunerScreen] Inactivitate — sesiune resetată automat');
+        AppLogger.w('[TunerScreen] Inactivitate — sesiune resetată automat');
         _resetSession();
       }
     });
@@ -630,7 +630,7 @@ class _TunerScreenState extends State<TunerScreen>
     _sessionRecorded = true;
     final duration = DateTime.now().difference(started).inMilliseconds / 1000.0;
     AppLogger.i(
-      '📜 [Tuner] Sesiune completă: ${_tuning.notes.length} corzi în ${duration.toStringAsFixed(1)}s',
+      '[Tuner] Sesiune completă: ${_tuning.notes.length} corzi în ${duration.toStringAsFixed(1)}s',
     );
     UserDataService.instance.recordSession(
       instrument: AppSettings.instance.instrumentId,
@@ -682,7 +682,7 @@ class _TunerScreenState extends State<TunerScreen>
       await _audioService.startRecording();
       if (!mounted) return;
 
-      AppLogger.i('🚀 [TunerScreen] Captură pornită automat');
+      AppLogger.i('[TunerScreen] Captură pornită automat');
       _ticker.repeat();
       setState(() {
         _listening = true;
@@ -697,7 +697,7 @@ class _TunerScreenState extends State<TunerScreen>
       });
 
       _audioSubscription = _audioService.audioStream?.listen((chunk) async {
-        // ── Pipeline #1: AI Precision — acumulare ferestre 0.8s ─────
+        // Pipeline #1: AI Precision — acumulare ferestre 0.8s
         if (_aiPrecisionEnabled) {
           _aiWindowBuffer.add(chunk);
           if (_aiWindowBuffer.length >= _kAiWindowBytes &&
@@ -708,7 +708,7 @@ class _TunerScreenState extends State<TunerScreen>
             // F# vag din zgomotul de fond și economisim un request.
             if (_audioRms(window) < _kAiMinRms) {
               AppLogger.d(
-                '🔍 [Tuner] AI fereastră silențioasă — sar peste request',
+                '[Tuner] AI fereastră silențioasă — sar peste request',
               );
             } else {
               // Trimite în background — nu așteptăm aici, YIN continuă.
@@ -719,23 +719,23 @@ class _TunerScreenState extends State<TunerScreen>
             final bytes = _aiWindowBuffer.toBytes();
             _aiWindowBuffer.clear();
             _aiWindowBuffer.add(bytes.sublist(_kAiWindowBytes));
-            AppLogger.d('🔍 [Tuner] AI backpressure — am aruncat o fereastră');
+            AppLogger.d('[Tuner] AI backpressure — am aruncat o fereastră');
           }
         }
 
-        // ── Fallback CREPE: YIN mut > 700ms + hint proaspăt → CREPE preia acul.
+        // Fallback CREPE: YIN mut > 700ms + hint proaspăt → CREPE preia acul.
         if (_aiPrecisionEnabled && !_aiDriving && _aiHintFresh) {
           final lastYin = _lastYinDisplay;
           if (lastYin == null ||
               DateTime.now().difference(lastYin) > _kYinMuteForAi) {
-            AppLogger.i('🤖 [Tuner] YIN mut — CREPE preia acul (fallback)');
+            AppLogger.i('[Tuner] YIN mut — CREPE preia acul (fallback)');
             _aiDriving = true;
             _yinRecoveryCount = 0;
             _driveMeterFromCrepe(); // arătăm imediat ce avem de la CREPE
           }
         }
 
-        // ── Pipeline #2: YIN — pitch în timp real ───────────────────
+        // Pipeline #2: YIN — pitch în timp real
         final pr = await _pitchService.analyze(chunk);
 
         // Filtrăm zgomot: doar detecții sigure
@@ -765,7 +765,7 @@ class _TunerScreenState extends State<TunerScreen>
         _onValidPitch(pr.frequency);
       });
     } catch (e) {
-      AppLogger.e('❌ [TunerScreen] Eroare la pornirea capturii', error: e);
+      AppLogger.e('[TunerScreen] Eroare la pornirea capturii', error: e);
     }
   }
 
@@ -779,7 +779,7 @@ class _TunerScreenState extends State<TunerScreen>
       if (!mounted) return;
       _ticker.stop();
 
-      AppLogger.w('🔶 [TunerScreen] Captură oprită');
+      AppLogger.w('[TunerScreen] Captură oprită');
       setState(() {
         _listening = false;
         _hasSignal = false;
@@ -796,12 +796,12 @@ class _TunerScreenState extends State<TunerScreen>
         _lastYinDisplay = null;
       });
     } catch (e) {
-      AppLogger.e('❌ [TunerScreen] Eroare la oprirea capturii', error: e);
+      AppLogger.e('[TunerScreen] Eroare la oprirea capturii', error: e);
     }
   }
 
   void _selectTuning(Tuning tuning) {
-    AppLogger.i('🎸 [TunerScreen] Acordaj schimbat: ${tuning.name}');
+    AppLogger.i('[TunerScreen] Acordaj schimbat: ${tuning.name}');
     setState(() {
       _tuning = tuning;
       _lockedString = null; // acordaj nou → revenim la Auto
@@ -823,7 +823,7 @@ class _TunerScreenState extends State<TunerScreen>
   /// Activează/dezactivează AI Precision (CREPE backend).
   void _toggleAiPrecision() {
     final next = !_aiPrecisionEnabled;
-    AppLogger.i('🤖 [TunerScreen] AI Precision → ${next ? 'ON' : 'OFF'}');
+    AppLogger.i('[TunerScreen] AI Precision → ${next ? 'ON' : 'OFF'}');
     setState(() {
       _aiPrecisionEnabled = next;
       if (!next) _resetAiState();
@@ -853,7 +853,7 @@ class _TunerScreenState extends State<TunerScreen>
       if (result == null) {
         _aiFailCount++;
         if (_aiFailCount >= _kAiMaxFails && _aiPrecisionEnabled) {
-          AppLogger.w('🔶 [Tuner] AI Precision oprit — server inaccesibil');
+          AppLogger.w('[Tuner] AI Precision oprit — server inaccesibil');
           setState(() {
             _aiPrecisionEnabled = false;
             _resetAiState();
@@ -876,7 +876,7 @@ class _TunerScreenState extends State<TunerScreen>
       // Filtru #1: confidence prea mic → ignorăm
       if (result.confidence < _kAiMinConfidence) {
         AppLogger.d(
-          '🔍 [Tuner] AI ignorat: conf '
+          '[Tuner] AI ignorat: conf '
           '${result.confidence.toStringAsFixed(2)}',
         );
         return;
@@ -889,7 +889,7 @@ class _TunerScreenState extends State<TunerScreen>
       final n = _pitchService.nearestNoteInTuning(result.frequency, notes);
       if (n.cents.abs() > _kAiMaxClampedCents) {
         AppLogger.d(
-          '🔍 [Tuner] AI spike edge '
+          '[Tuner] AI spike edge '
           '(${n.cents.toStringAsFixed(0)}c) ignorat',
         );
         return;
@@ -909,13 +909,13 @@ class _TunerScreenState extends State<TunerScreen>
       if (_aiDriving) _driveMeterFromCrepe();
 
       AppLogger.i(
-        '🤖 [Tuner] AI: ${result.frequency.toStringAsFixed(2)}Hz '
+        '[Tuner] AI: ${result.frequency.toStringAsFixed(2)}Hz '
         'conf ${(result.confidence * 100).toStringAsFixed(0)}% '
         '→ ${n.note} ${n.cents.toStringAsFixed(0)}c'
         '${_aiDriving ? " (CREPE conduce)" : ""}',
       );
     } catch (e, st) {
-      AppLogger.e('❌ [Tuner] AI window error', error: e, stackTrace: st);
+      AppLogger.e('[Tuner] AI window error', error: e, stackTrace: st);
     } finally {
       _aiRequestInFlight = false;
     }
@@ -939,8 +939,8 @@ class _TunerScreenState extends State<TunerScreen>
     if (!_listening) return 'Microfon oprit';
     if (!_hasSignal) return 'Ciupește o coardă pentru a începe';
     final c = _targetCents;
-    if (c.abs() < 5) return '✓  Acordat';
-    return c < 0 ? '▲  Prea jos' : '▼  Prea sus';
+    if (c.abs() < 5) return ' Acordat';
+    return c < 0 ? ' Prea jos' : ' Prea sus';
   }
 
   @override
@@ -975,7 +975,7 @@ class _TunerScreenState extends State<TunerScreen>
                     // Spațiu pentru AppBar-ul transparent (body extins în
                     // spate ca gradientul să fie continuu).
                     const SizedBox(height: kToolbarHeight - 12),
-                    // ── Selectorul de MOD principal ─────────────────
+                    // Selectorul de MOD principal
                     // Două pastile mari, segmented: Instrument vs Cromatic.
                     // Tot ce e specific instrumentului (acordaj, corzi) se
                     // ascunde automat când treci pe Cromatic — concept fără
@@ -1120,7 +1120,7 @@ class _TunerScreenState extends State<TunerScreen>
   /// Cere permisiunea de microfon; dacă e refuzată permanent, deschide
   /// setările de sistem (singura cale după un refuz permanent).
   Future<void> _requestMicAccess() async {
-    AppLogger.i('🎤 [TunerScreen] Cerere acces microfon din ecranul dedicat');
+    AppLogger.i('[TunerScreen] Cerere acces microfon din ecranul dedicat');
     final granted = await _audioService.requestPermission();
     if (!mounted) return;
     if (granted) {
@@ -1750,7 +1750,7 @@ class _TunerScreenState extends State<TunerScreen>
   }
 
   void _lockString(String full) {
-    AppLogger.i('🎸 [TunerScreen] Mod manual: coarda $full');
+    AppLogger.i('[TunerScreen] Mod manual: coarda $full');
     setState(() {
       _lockedString = full;
       _clearDetection();
@@ -1780,7 +1780,7 @@ class _TunerScreenState extends State<TunerScreen>
   }
 
   void _setAuto() {
-    AppLogger.i('🎸 [TunerScreen] Mod Auto (detecție automată)');
+    AppLogger.i('[TunerScreen] Mod Auto (detecție automată)');
     setState(() {
       _lockedString = null;
       _clearDetection();
@@ -2045,9 +2045,9 @@ class _TunerMeterPainter extends CustomPainter {
       canvas.drawLine(Offset(x, cy - 12 - h), Offset(x, cy - 12), paint);
     }
 
-    _drawLabel(canvas, '♭', _mapX(-50, w), cy + 22, Colors.white38);
+    _drawLabel(canvas, '', _mapX(-50, w), cy + 22, Colors.white38);
     _drawLabel(canvas, '0', _mapX(0, w), cy + 22, Colors.white54);
-    _drawLabel(canvas, '♯', _mapX(50, w), cy + 22, Colors.white38);
+    _drawLabel(canvas, '', _mapX(50, w), cy + 22, Colors.white38);
 
     // Indicator
     final px = _mapX(hasSignal ? cents : 0, w);

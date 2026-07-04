@@ -73,7 +73,7 @@ class ActivePage extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Request explicit de schimbare a tabului ────────────────────────
+  // Request explicit de schimbare a tabului
   //
   // În general taburile se schimbă din `PersistentFeatureBar` (tap pe
   // buton) sau prin swipe pe PageView. Există însă cazuri în care un

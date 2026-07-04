@@ -30,7 +30,7 @@ class CrepeService:
         # Forțăm lazy-loading la startup (nu la primul request).
         crepe.core.build_and_load_model(self.MODEL_CAPACITY)
         elapsed = time.perf_counter() - t0
-        logger.info("🚀 [crepe_service] Model loaded in %.2fs", elapsed)
+        logger.info("[crepe_service] Model loaded in %.2fs", elapsed)
 
     def predict(
         self,
@@ -69,7 +69,7 @@ class CrepeService:
             duration_ms = int(audio.size / sample_rate * 1000)
 
             logger.debug(
-                "🎸 [crepe_service] freq=%.2f Hz conf=%.3f duration=%dms",
+                "[crepe_service] freq=%.2f Hz conf=%.3f duration=%dms",
                 best_freq,
                 best_conf,
                 duration_ms,
@@ -84,7 +84,7 @@ class CrepeService:
             raise
         except Exception:
             logger.error(
-                "❌ [crepe_service] Eroare la predicție",
+                "[crepe_service] Eroare la predicție",
                 exc_info=True,
             )
             raise

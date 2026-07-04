@@ -38,16 +38,16 @@ async def detect_pitch(
 
     crepe_service = getattr(request.app.state, "crepe_service", None)
     if crepe_service is None:
-        logger.error("❌ [pitch] CrepeService nu e disponibil în app.state")
+        logger.error("[pitch] CrepeService nu e disponibil în app.state")
         raise HTTPException(status_code=500, detail="Serviciu AI indisponibil")
 
     try:
         result = crepe_service.predict(raw)
     except ValueError as e:
-        logger.warning("🔶 [pitch] Audio invalid: %s", e)
+        logger.warning("[pitch] Audio invalid: %s", e)
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        logger.error("❌ [pitch] Eroare internă la predicție", exc_info=True)
+        logger.error("[pitch] Eroare internă la predicție", exc_info=True)
         raise HTTPException(status_code=500, detail="Eroare internă la detecție") from e
 
     return PitchDetectionResponse(**result)

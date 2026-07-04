@@ -43,7 +43,7 @@ class UserDataService extends ChangeNotifier {
   /// silent (fără să retrimitem același lucru înapoi la server).
   Future<void> onLoginSuccess() async {
     if (_token == null) return;
-    AppLogger.i('🔐 [UserData] Login confirmat — sincronizez preferințe + istoric');
+    AppLogger.i('[UserData] Login confirmat — sincronizez preferințe + istoric');
     await Future.wait([
       _fetchAndApplyPreferences(),
       refreshHistorySummary(),
@@ -85,14 +85,14 @@ class UserDataService extends ChangeNotifier {
       _suppressNextPush = true;
       await AppSettings.instance.setLeftHanded(leftHanded);
       AppLogger.i(
-        '🎸 [UserData] Aplicat din server: $instrument @ A4=${a4.toStringAsFixed(0)}${leftHanded ? ' (stângaci)' : ''}',
+        '[UserData] Aplicat din server: $instrument @ A4=${a4.toStringAsFixed(0)}${leftHanded ? ' (stângaci)' : ''}',
       );
     } on TimeoutException {
-      AppLogger.w('🔶 [UserData] Timeout la fetch preferințe');
+      AppLogger.w('[UserData] Timeout la fetch preferințe');
     } on SocketException {
-      AppLogger.w('🔶 [UserData] Fără rețea — preferințele rămân locale');
+      AppLogger.w('[UserData] Fără rețea — preferințele rămân locale');
     } catch (e) {
-      AppLogger.e('❌ [UserData] Eroare la fetch preferințe', error: e);
+      AppLogger.e('[UserData] Eroare la fetch preferințe', error: e);
     }
   }
 
@@ -119,13 +119,13 @@ class UserDataService extends ChangeNotifier {
           )
           .timeout(ApiConstants.userDataTimeout);
       if (res.statusCode == 200) {
-        AppLogger.i('🔐 [UserData] Preferințe sincronizate la server');
+        AppLogger.i('[UserData] Preferințe sincronizate la server');
       } else {
-        AppLogger.w('🔶 [UserData] Push preferințe → status ${res.statusCode}');
+        AppLogger.w('[UserData] Push preferințe → status ${res.statusCode}');
       }
     } catch (e) {
       // Nu deranjăm userul cu erori — următoarea schimbare le re-trimite.
-      AppLogger.w('🔶 [UserData] Push preferințe eșuat: $e');
+      AppLogger.w('[UserData] Push preferințe eșuat: $e');
     }
   }
 
@@ -158,14 +158,14 @@ class UserDataService extends ChangeNotifier {
           )
           .timeout(ApiConstants.userDataTimeout);
       if (res.statusCode == 200) {
-        AppLogger.i('📜 [UserData] Sesiune salvată: $instrument/$tuningName ($durationSeconds s)');
+        AppLogger.i('[UserData] Sesiune salvată: $instrument/$tuningName ($durationSeconds s)');
         // Reîmprospătare „lazy" a contoarelor afișate în profil/istoric.
         unawaited(refreshHistorySummary());
       } else {
-        AppLogger.w('🔶 [UserData] Save sesiune → status ${res.statusCode}');
+        AppLogger.w('[UserData] Save sesiune → status ${res.statusCode}');
       }
     } catch (e) {
-      AppLogger.w('🔶 [UserData] Save sesiune eșuat: $e');
+      AppLogger.w('[UserData] Save sesiune eșuat: $e');
     }
   }
 
@@ -191,7 +191,7 @@ class UserDataService extends ChangeNotifier {
             .toList(growable: false);
       }
     } catch (e) {
-      AppLogger.w('🔶 [UserData] Refresh istoric eșuat: $e');
+      AppLogger.w('[UserData] Refresh istoric eșuat: $e');
     } finally {
       _historyLoading = false;
       notifyListeners();
@@ -220,7 +220,7 @@ class UserDataService extends ChangeNotifier {
         return list;
       }
     } catch (e) {
-      AppLogger.w('🔶 [UserData] Fetch full istoric eșuat: $e');
+      AppLogger.w('[UserData] Fetch full istoric eșuat: $e');
     }
     return const [];
   }

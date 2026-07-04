@@ -158,7 +158,7 @@ Write-Host "FULL log: $fullLogFile" -ForegroundColor Cyan
 Write-Host "APP  log: $appLogFile" -ForegroundColor Green
 Write-Host ""
 
-# App log lines have the custom _EmojiFormatter format
+# App log lines use the custom timestamp formatter
 # "HH:MM:SS.mmm | LEVEL | logger | ...". Everything else is uvicorn's
 # native output and goes only to the FULL log.
 $appPattern = '^\d{2}:\d{2}:\d{2}'

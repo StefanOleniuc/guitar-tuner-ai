@@ -21,7 +21,7 @@ _DEFAULT_INSTRUMENT = "guitar"
 _DEFAULT_A4 = 440.0
 
 
-# ─── Modele ─────────────────────────────────────────────────────────
+# Modele
 class PreferencesIn(BaseModel):
     instrument: str = Field(..., min_length=1, max_length=32)
     a4: float = Field(..., ge=415.0, le=466.0)
@@ -62,7 +62,7 @@ class TuningHistoryOut(BaseModel):
     sessions: list[TuningSessionOut]
 
 
-# ─── Preferințe ─────────────────────────────────────────────────────
+# Preferințe
 @router.get("/preferences", response_model=PreferencesOut)
 def get_preferences(
     user: Annotated[dict, Depends(require_user)],
@@ -91,14 +91,14 @@ def put_preferences(
     saved = auth_db.get_preferences(user["id"])
     assert saved is not None
     logger.info(
-        "🎸 [user] Preferințe actualizate user_id=%d → %s @ A4=%.1f%s",
+        "[user] Preferințe actualizate user_id=%d → %s @ A4=%.1f%s",
         user["id"], body.instrument, body.a4,
         " (stângaci)" if body.left_handed else "",
     )
     return PreferencesOut(**saved)
 
 
-# ─── Istoric acordaje ───────────────────────────────────────────────
+# Istoric acordaje
 @router.post("/tuning-sessions", response_model=TuningSessionOut)
 def add_session(
     body: TuningSessionIn,
@@ -120,7 +120,7 @@ def add_session(
     sessions = auth_db.list_tuning_sessions(user["id"], limit=1)
     assert sessions, "Sesiunea tocmai inserată trebuie să existe"
     logger.info(
-        "📜 [user] Sesiune nouă (#%d) pentru user_id=%d: %s/%s",
+        "[user] Sesiune nouă (#%d) pentru user_id=%d: %s/%s",
         session_id, user["id"], body.instrument, body.tuning_name,
     )
     return TuningSessionOut(**sessions[0])

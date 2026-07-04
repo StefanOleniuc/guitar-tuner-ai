@@ -58,18 +58,10 @@ flutter build apk --release
 # rezultat: build/app/outputs/flutter-apk/app-release.apk
 ```
 
-### 3. Backend (opțional — este deja desfășurat pe Railway)
-Pentru rularea locală, în scop de dezvoltare:
-```powershell
-cd backend
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env       # completeaza GTUNE_JWT_SECRET, DATABASE_URL, SENDGRID_API_KEY
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-Verificare: http://localhost:8000/api/health · documentație API: http://localhost:8000/docs
-Funcțiile de cont necesită o bază de date PostgreSQL (`DATABASE_URL`).
+### 3. Backend (deja desfășurat pe Railway)
+Backendul (FastAPI + CREPE) rulează în cloud pe Railway și este folosit automat de
+aplicație — nu trebuie pornit separat. Codul sursă este în `backend/`; pentru rularea
+locală, în scop de dezvoltare, vezi `backend/README.md`.
 
 ## Testare
 ```powershell

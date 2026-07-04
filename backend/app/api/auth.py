@@ -67,14 +67,14 @@ def _check_email_domain(email: str) -> tuple[bool, str | None]:
         # domeniul există → respingem. Bug-ul anterior (btt.ch timeout →
         # acceptat) e închis aici.
         logger.warning(
-            "🔶 [auth] DNS pentru '%s' a eșuat (%s) — înregistrare respinsă",
+            "[auth] DNS pentru '%s' a eșuat (%s) — înregistrare respinsă",
             domain,
             exc.__class__.__name__,
         )
         return False, "Nu am putut verifica domeniul emailului. Folosește o adresă reală și încearcă din nou."
 
 
-# ─── Modele cerere / răspuns ────────────────────────────────────────
+# Modele cerere / răspuns
 class RegisterRequest(BaseModel):
     email: str
     password: str = Field(..., min_length=6)
@@ -126,7 +126,7 @@ def _require_user(authorization: str | None) -> dict:
     return row
 
 
-# ─── Endpoint-uri ───────────────────────────────────────────────────
+# Endpoint-uri
 @router.post("/register", response_model=AuthResponse)
 def register(req: RegisterRequest) -> AuthResponse:
     email = req.email.strip().lower()
@@ -139,14 +139,14 @@ def register(req: RegisterRequest) -> AuthResponse:
     # Verificăm că domeniul de email chiar poate primi mesaje (DNS/MX).
     domain_ok, domain_err = _check_email_domain(email)
     if not domain_ok:
-        logger.info("🔐 [auth] Înregistrare respinsă (domeniu invalid): %s", email)
+        logger.info("[auth] Înregistrare respinsă (domeniu invalid): %s", email)
         raise HTTPException(status_code=400, detail=domain_err)
     user_id = auth_db.create_user(
         email, hash_password(req.password), req.display_name
     )
     row = auth_db.get_user_by_id(user_id)
     assert row is not None
-    logger.info("🔐 [auth] Cont nou creat: %s", email)
+    logger.info("[auth] Cont nou creat: %s", email)
     return AuthResponse(token=create_token(user_id), user=_public(row))
 
 
@@ -156,7 +156,7 @@ def login(req: LoginRequest) -> AuthResponse:
     row = auth_db.get_user_by_email(email)
     if row is None or not verify_password(req.password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="Email sau parolă greșite")
-    logger.info("🔐 [auth] Autentificare: %s", email)
+    logger.info("[auth] Autentificare: %s", email)
     return AuthResponse(token=create_token(row["id"]), user=_public(row))
 
 
@@ -181,11 +181,11 @@ def update_me(
     auth_db.update_display_name(row["id"], name)
     updated = auth_db.get_user_by_id(row["id"])
     assert updated is not None
-    logger.info("🔐 [auth] Profil actualizat user_id=%d", row["id"])
+    logger.info("[auth] Profil actualizat user_id=%d", row["id"])
     return _public(updated)
 
 
-# ─── Resetare parolă cu OTP ────────────────────────────────────────
+# Resetare parolă cu OTP
 # Token-uri stocate în memorie: {email: (code, expires_at)}
 # Nu necesită modificări de schemă DB. La restart server token-urile
 # expirate sunt pierdute (utilizatorul trebuie să ceară unul nou).
@@ -209,7 +209,7 @@ def _send_reset_email(to_email: str, code: str) -> None:
 
     if not settings.SENDGRID_API_KEY:
         logger.error(
-            "🔐 [auth] SENDGRID_API_KEY lipsește — emailul de resetare NU s-a trimis"
+            "[auth] SENDGRID_API_KEY lipsește — emailul de resetare NU s-a trimis"
         )
         return
 
@@ -236,7 +236,7 @@ def _send_reset_email(to_email: str, code: str) -> None:
     }
 
     try:
-        logger.info("🔐 [auth] SendGrid: POST /mail/send către %s…", to_email)
+        logger.info("[auth] SendGrid: POST /mail/send către %s…", to_email)
         with httpx.Client(timeout=15.0) as client:
             resp = client.post(
                 "https://api.sendgrid.com/v3/mail/send",
@@ -246,21 +246,21 @@ def _send_reset_email(to_email: str, code: str) -> None:
         # SendGrid returnează 202 Accepted la succes (body gol).
         if 200 <= resp.status_code < 300:
             logger.info(
-                "🔐 [auth] SendGrid OK (status %d) — email trimis către %s",
+                "[auth] SendGrid OK (status %d) — email trimis către %s",
                 resp.status_code,
                 to_email,
             )
             return
         logger.error(
-            "🔐 [auth] SendGrid HTTP %d: %s",
+            "[auth] SendGrid HTTP %d: %s",
             resp.status_code,
             resp.text[:500],
         )
     except httpx.TimeoutException as exc:
-        logger.error("🔐 [auth] SendGrid timeout: %s", exc)
+        logger.error("[auth] SendGrid timeout: %s", exc)
     except Exception as exc:
         logger.error(
-            "🔐 [auth] SendGrid a eșuat: %s: %s", type(exc).__name__, exc
+            "[auth] SendGrid a eșuat: %s: %s", type(exc).__name__, exc
         )
 
 
@@ -287,10 +287,10 @@ def reset_password(
             try:
                 _send_reset_email(to, c)
             except Exception as exc:
-                logger.error("🔐 [auth] Eroare trimitere email reset: %s", exc)
+                logger.error("[auth] Eroare trimitere email reset: %s", exc)
 
         background_tasks.add_task(_send_safe, email, code)
-    logger.info("🔐 [auth] Resetare parolă cerută pentru: %s", email)
+    logger.info("[auth] Resetare parolă cerută pentru: %s", email)
     return {
         "message": "Dacă există un cont cu această adresă, "
         "vei primi un cod de resetare pe email.",
@@ -310,5 +310,5 @@ def reset_confirm(req: ResetConfirmRequest) -> dict[str, str]:
         raise HTTPException(status_code=400, detail="Cod invalid sau expirat.")
     auth_db.update_password_hash(email, hash_password(req.new_password))
     del _reset_tokens[email]
-    logger.info("🔐 [auth] Parolă resetată pentru: %s", email)
+    logger.info("[auth] Parolă resetată pentru: %s", email)
     return {"message": "Parola a fost resetată cu succes."}

@@ -3,7 +3,9 @@ import 'package:flutter/foundation.dart';
 class ApiConstants {
   ApiConstants._();
 
-  static const String _baseUrlDebug = 'http://192.168.1.129:8000';
+  // Backend local (dezvoltare). 10.0.2.2 = localhost-ul gazdei pentru emulatorul
+  // Android; pentru un dispozitiv fizic, se pune IP-ul din LAN al calculatorului.
+  static const String _baseUrlDebug = 'http://10.0.2.2:8000';
   static const String _baseUrlProd = 'https://guitar-tuner-ai.up.railway.app';
 
   static String get apiBaseUrl => kDebugMode ? _baseUrlDebug : _baseUrlProd;

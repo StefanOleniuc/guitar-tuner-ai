@@ -56,7 +56,7 @@ class NoteAudio {
       final next = _pool[_poolIdx];
       await next.play(BytesSource(wav));
     } catch (e) {
-      AppLogger.w('🔶 [NoteAudio] Redare eșuată ($fullNote): $e');
+      AppLogger.w('[NoteAudio] Redare eșuată ($fullNote): $e');
     }
   }
 

@@ -84,9 +84,9 @@ class _SettingsList extends StatelessWidget {
   }
 }
 
-// ───────────────────────────────────────────────────────────────────
+//
 // Etichetă de secțiune
-// ───────────────────────────────────────────────────────────────────
+//
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel({required this.icon, required this.text});
 
@@ -113,9 +113,9 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-// ───────────────────────────────────────────────────────────────────
+//
 // Selectorul de instrument
-// ───────────────────────────────────────────────────────────────────
+//
 class _InstrumentPicker extends StatelessWidget {
   const _InstrumentPicker();
 
@@ -147,7 +147,7 @@ class _InstrumentPicker extends StatelessWidget {
   void _selectAndReturn(BuildContext context, Instrument inst) {
     HapticFeedback.selectionClick();
     AppSettings.instance.setInstrument(inst.id);
-    AppLogger.i('⚙️ [Settings] Instrument selectat: ${inst.name}');
+    AppLogger.i('[Settings] Instrument selectat: ${inst.name}');
     // Mic delay pentru animația de selecție, apoi înapoi.
     Future.delayed(const Duration(milliseconds: 260), () {
       if (context.mounted) Navigator.of(context).maybePop();
@@ -242,9 +242,9 @@ class _InstrumentTile extends StatelessWidget {
   }
 }
 
-// ───────────────────────────────────────────────────────────────────
+//
 // Cardul de calibrare A4 cu butoane +/− animate
-// ───────────────────────────────────────────────────────────────────
+//
 class _A4CalibrationCard extends StatelessWidget {
   const _A4CalibrationCard();
 
@@ -376,9 +376,9 @@ class _A4CalibrationCard extends StatelessWidget {
   }
 }
 
-// ───────────────────────────────────────────────────────────────────
+//
 // Cardul de afișaj — comutator pentru frecvența (Hz)
-// ───────────────────────────────────────────────────────────────────
+//
 class _DisplayCard extends StatelessWidget {
   const _DisplayCard();
 
@@ -564,9 +564,9 @@ class _StepButtonState extends State<_StepButton> {
   }
 }
 
-// ───────────────────────────────────────────────────────────────────
+//
 // Cardul de cont — login / profil / delogare
-// ───────────────────────────────────────────────────────────────────
+//
 class _AccountCard extends StatelessWidget {
   const _AccountCard();
 
@@ -770,9 +770,9 @@ class _AccountCard extends StatelessWidget {
   }
 }
 
-// ───────────────────────────────────────────────────────────────────
+//
 // Footer „Despre"
-// ───────────────────────────────────────────────────────────────────
+//
 class _AboutFooter extends StatelessWidget {
   const _AboutFooter();
 
